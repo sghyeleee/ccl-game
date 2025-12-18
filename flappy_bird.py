@@ -398,7 +398,7 @@ class FlappyBirdGame:
     # -------------------
     # 메인 루프
     # -------------------
-    def run(self) -> None:
+    def run(self, quit_on_exit: bool = True) -> None:
         while self.running:
             dt_ms = self.clock.tick(FPS)
             dt = dt_ms / 1000.0
@@ -437,11 +437,12 @@ class FlappyBirdGame:
 
             pygame.display.flip()
 
-        pygame.quit()
+        if quit_on_exit:
+            pygame.quit()
 
 
-def run_game() -> None:
-    FlappyBirdGame().run()
+def run_game(*, quit_on_exit: bool = True) -> None:
+    FlappyBirdGame().run(quit_on_exit=quit_on_exit)
 
 
 if __name__ == "__main__":

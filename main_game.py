@@ -7,13 +7,9 @@ from typing import Callable, Iterable, List, Optional, Tuple
 
 import pygame
 
-from buffet_plate_stack import run_game as run_plate_stack
-from flappy_bird import run_game as run_flappy_bird
-from last_product_rush import run_game as run_last_product_rush
-from run_to_restaurant import run_game as run_restaurant_dash
 from snake_survival import run_game as run_snake
-from tetris_party import run_game as run_tetris_party
-
+from sugar_game import run_game as run_sugar_game
+from flappy_bird import run_game as run_flappy_bird
 
 SCREEN_WIDTH = 800
 SCREEN_HEIGHT = 540
@@ -90,12 +86,13 @@ def _load_image(name: str) -> pygame.Surface:
 def get_game_entries() -> List[GameEntry]:
     """런처에서 노출할 미니게임 목록을 반환한다."""
     return [
-        GameEntry("Flappy Bird", "탭으로 날아올라 파이프 사이를 통과하세요. 부딪히면 게임오버!", run_flappy_bird),
-        GameEntry("Snake Survival", "먹이를 먹고 몸을 늘리며 오래 살아남으세요.", run_snake),
-        GameEntry("마지막 상품 사수하기", "무한 러닝! 아이템을 모아 부스터로 장애물을 돌파하세요.", run_last_product_rush),
-        GameEntry("테트리스", "블록을 쌓아 라인을 지우세요. 레벨이 오를수록 빨라집니다!", run_tetris_party),
-        GameEntry("맛집 달리기", "1km 달려서 맛집에 도착! 숙이기와 점프로 장애물 회피.", run_restaurant_dash),
-        GameEntry("뷔페 접시 탑쌓기", "리듬을 맞춰 접시를 정확히 겹쳐 가장 높이 쌓으세요.", run_plate_stack),
+        GameEntry(
+            "Flappy Bird",
+            "탭으로 날아올라 파이프 사이를 통과하세요. 부딪히면 게임오버!",
+            lambda: run_flappy_bird(quit_on_exit=False),
+        ),
+        GameEntry("Snake Survival", "먹이를 먹고 몸을 늘리며 오래 살아남으세요.", lambda: run_snake(quit_on_exit=False)),
+        GameEntry("Sugar Game", "각설탕을 쌓아 높이 올리세요. 너무 높아지면 게임오버!", lambda: run_sugar_game(quit_on_exit=False)),
     ]
 
 
@@ -184,6 +181,9 @@ class BuriBuriPartyApp:
                     self.running = False
                 else:
                     self._handle_event(event)
+
+            if not self.running or not pygame.display.get_init() or pygame.display.get_surface() is None:
+                break
 
             self._update(delta_ms)
             self._draw()
@@ -334,6 +334,10 @@ class BuriBuriPartyApp:
         self.countdown_start_ms = None
         # pygame.display.quit() 제거 - display 공유 방식으로 변경
         game_entry.start_fn()
+        # 미니게임이 display 모드/서피스를 바꿀 수 있으니, 복귀 후 현재 서피스로 동기화한다.
+        current_surface = pygame.display.get_surface()
+        if current_surface is not None:
+            self.screen = current_surface
         # 각 게임이 종료되면 pygame을 다시 초기화하지 않음
         self._gain_experience(20)
         self._show_status(f"{game_entry.title} 완료! 경험치 +20")
