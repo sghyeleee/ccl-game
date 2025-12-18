@@ -1,0 +1,432 @@
+from __future__ import annotations
+
+import random
+from collections import deque
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Deque, Dict, List, Tuple
+
+import pygame
+
+
+CELL_SIZE = 20
+GRID_WIDTH = 32
+GRID_HEIGHT = 22
+HUD_HEIGHT = 60
+SCREEN_WIDTH = 800
+SCREEN_HEIGHT = 540
+GRID_PIXEL_WIDTH = GRID_WIDTH * CELL_SIZE
+GRID_PIXEL_HEIGHT = GRID_HEIGHT * CELL_SIZE
+PLAYFIELD_OFFSET_X = (SCREEN_WIDTH - GRID_PIXEL_WIDTH) // 2
+PLAYFIELD_OFFSET_Y = HUD_HEIGHT
+BACKGROUND_COLOR = (12, 16, 28)
+TEXT_COLOR = (240, 240, 240)
+INITIAL_SPEED = 8  # moves per second
+SPEED_INCREMENT = 0.15
+ASSET_DIR = Path(__file__).resolve().parent / "assets" / "snake_survival"
+FONT_FILE = ASSET_DIR / "Pretendard-Regular.ttf"
+FONT_CANDIDATES = (
+    "Pretendard",
+    "Pretendard-Regular",
+    "Apple SD Gothic Neo",
+    "NanumGothic",
+    "NanumSquare",
+    "Noto Sans CJK KR",
+    "NotoSansKR",
+    "Malgun Gothic",
+)
+
+UP: Tuple[int, int] = (0, -1)
+DOWN: Tuple[int, int] = (0, 1)
+LEFT: Tuple[int, int] = (-1, 0)
+RIGHT: Tuple[int, int] = (1, 0)
+DIRECTION_TO_INDEX: Dict[Direction, int] = {
+    UP: 0,
+    DOWN: 1,
+    LEFT: 2,
+    RIGHT: 3,
+}
+CORNER_TO_INDEX: Dict[frozenset[Direction], int] = {
+    frozenset({UP, RIGHT}): 2,
+    frozenset({RIGHT, DOWN}): 3,
+    frozenset({DOWN, LEFT}): 4,
+    frozenset({LEFT, UP}): 5,
+}
+SPARK_FRAME_DURATION = 0.06
+
+Direction = Tuple[int, int]
+Point = Tuple[int, int]
+
+
+@dataclass
+class SpriteAssets:
+    """Container for all sprite resources used by Snake Survival."""
+
+    head_frames: List[pygame.Surface]
+    body_frames: List[pygame.Surface]
+    tail_frames: List[pygame.Surface]
+    food_frames: List[pygame.Surface]
+    background_tile: pygame.Surface
+    grid_overlay: pygame.Surface
+    hud_panel: pygame.Surface
+    game_over_card: pygame.Surface
+    shadow: pygame.Surface
+    spark_frames: List[pygame.Surface]
+
+
+@dataclass
+class SparkEffect:
+    """Store spark animation state for food collection feedback."""
+
+    center: Tuple[int, int]
+    frame_index: int = 0
+    timer: float = 0.0
+
+
+def load_image(name: str) -> pygame.Surface:
+    """Load a single image from the asset directory with alpha support."""
+    path = ASSET_DIR / name
+    return pygame.image.load(path.as_posix()).convert_alpha()
+
+
+def slice_sheet(sheet: pygame.Surface, frame_width: int, frame_height: int) -> List[pygame.Surface]:
+    """Split a sprite sheet into equal-sized frame surfaces."""
+    frames = []
+    columns = sheet.get_width() // frame_width
+    for idx in range(columns):
+        rect = pygame.Rect(idx * frame_width, 0, frame_width, frame_height)
+        frames.append(sheet.subsurface(rect).copy())
+    return frames
+
+
+def load_assets() -> SpriteAssets:
+    """Load all required sprite assets for the game."""
+    head_frames = slice_sheet(load_image("snake_head.png"), CELL_SIZE, CELL_SIZE)
+    body_frames = slice_sheet(load_image("snake_body.png"), CELL_SIZE, CELL_SIZE)
+    tail_frames = slice_sheet(load_image("snake_tail.png"), CELL_SIZE, CELL_SIZE)
+    food_frames = slice_sheet(load_image("food_fruit_sheet.png"), CELL_SIZE, CELL_SIZE)
+    spark_sheet = load_image("spark_effect.png")
+    spark_frame_width = spark_sheet.get_width() // 4
+    spark_frames = slice_sheet(spark_sheet, spark_frame_width, spark_sheet.get_height())
+
+    return SpriteAssets(
+        head_frames=head_frames,
+        body_frames=body_frames,
+        tail_frames=tail_frames,
+        food_frames=food_frames,
+        background_tile=load_image("background_tile.png"),
+        grid_overlay=load_image("grid_overlay.png"),
+        hud_panel=load_image("hud_panel.png"),
+        game_over_card=load_image("game_over_card.png"),
+        shadow=load_image("shadow_ellipse.png"),
+        spark_frames=spark_frames,
+    )
+
+
+def spawn_food(snake: List[Point], variant_count: int) -> Tuple[Point, int]:
+    """Return a safe food location and the sprite index to display."""
+    position = create_food(snake)
+    variant = random.randrange(max(variant_count, 1))
+    return position, variant
+
+
+def direction_between(a: Point, b: Point) -> Direction:
+    """Return the direction vector needed to go from point a to point b."""
+    return (b[0] - a[0], b[1] - a[1])
+
+
+def body_frame_index(prev_segment: Point, current: Point, next_segment: Point) -> int:
+    """Determine which body sprite frame fits a middle snake segment."""
+    prev_dir = direction_between(current, prev_segment)
+    next_dir = direction_between(current, next_segment)
+
+    if prev_dir[0] == -next_dir[0] and prev_dir[0] != 0:
+        return 0  # horizontal
+    if prev_dir[1] == -next_dir[1] and prev_dir[1] != 0:
+        return 1  # vertical
+
+    return CORNER_TO_INDEX.get(frozenset({prev_dir, next_dir}), 0)
+
+
+def create_food(snake: List[Point]) -> Point:
+    """Return a random grid cell that does not overlap with the snake."""
+    available = {(x, y) for x in range(GRID_WIDTH) for y in range(GRID_HEIGHT)} - set(snake)
+    if not available:
+        return snake[-1]
+    return random.choice(tuple(available))
+
+
+def draw_background(
+    surface: pygame.Surface, background_tile: pygame.Surface, grid_overlay: pygame.Surface
+) -> None:
+    """Render the textured background and apply the grid overlay pattern."""
+    surface.fill(BACKGROUND_COLOR)
+    tile_width, tile_height = background_tile.get_size()
+    for x in range(0, SCREEN_WIDTH, tile_width):
+        for y in range(0, SCREEN_HEIGHT, tile_height):
+            surface.blit(background_tile, (x, y))
+
+    for x in range(0, GRID_PIXEL_WIDTH, CELL_SIZE):
+        for y in range(0, GRID_PIXEL_HEIGHT, CELL_SIZE):
+            surface.blit(
+                grid_overlay,
+                (PLAYFIELD_OFFSET_X + x, PLAYFIELD_OFFSET_Y + y),
+            )
+
+
+def draw_snake(
+    surface: pygame.Surface,
+    snake: List[Point],
+    head_frames: List[pygame.Surface],
+    body_frames: List[pygame.Surface],
+    tail_frames: List[pygame.Surface],
+    current_direction: Direction,
+    shadow: pygame.Surface,
+) -> None:
+    """Draw the snake using sprite assets for head, body, and tail."""
+    shadow_offset_x = (CELL_SIZE - shadow.get_width()) // 2
+    shadow_offset_y = CELL_SIZE - shadow.get_height()
+
+    for idx, segment in enumerate(snake):
+        pixel = (
+            PLAYFIELD_OFFSET_X + segment[0] * CELL_SIZE,
+            PLAYFIELD_OFFSET_Y + segment[1] * CELL_SIZE,
+        )
+        surface.blit(shadow, (pixel[0] + shadow_offset_x, pixel[1] + shadow_offset_y))
+
+        if idx == 0:
+            direction_index = DIRECTION_TO_INDEX.get(current_direction, DIRECTION_TO_INDEX[RIGHT])
+            surface.blit(head_frames[direction_index], pixel)
+            continue
+
+        if idx == len(snake) - 1:
+            prev_segment = snake[idx - 1]
+            tail_direction = direction_between(segment, prev_segment)
+            direction_index = DIRECTION_TO_INDEX.get(tail_direction, DIRECTION_TO_INDEX[RIGHT])
+            surface.blit(tail_frames[direction_index], pixel)
+            continue
+
+        prev_segment = snake[idx - 1]
+        next_segment = snake[idx + 1]
+        frame_idx = body_frame_index(prev_segment, segment, next_segment)
+        surface.blit(body_frames[frame_idx], pixel)
+
+
+def draw_food(
+    surface: pygame.Surface,
+    food: Point,
+    food_frames: List[pygame.Surface],
+    variant: int,
+    shadow: pygame.Surface,
+) -> None:
+    """Draw the active food sprite with a subtle shadow."""
+    pixel = (
+        PLAYFIELD_OFFSET_X + food[0] * CELL_SIZE,
+        PLAYFIELD_OFFSET_Y + food[1] * CELL_SIZE,
+    )
+    surface.blit(shadow, (pixel[0] + (CELL_SIZE - shadow.get_width()) // 2, pixel[1] + CELL_SIZE - shadow.get_height()))
+    frame = food_frames[variant % len(food_frames)]
+    surface.blit(frame, pixel)
+
+
+def draw_hud(
+    surface: pygame.Surface,
+    hud_panel: pygame.Surface,
+    font: pygame.font.Font,
+    score: int,
+    best: int,
+    speed: float,
+) -> None:
+    """Render the HUD panel with score information."""
+    hud_width = hud_panel.get_width()
+    hud_x = (SCREEN_WIDTH - hud_width) // 2
+    surface.blit(hud_panel, (hud_x, 0))
+
+    section = hud_width // 3
+    surface.blit(font.render(f"길이: {score}", True, TEXT_COLOR), (hud_x + 20, 12))
+    surface.blit(font.render(f"최고: {best}", True, TEXT_COLOR), (hud_x + section + 20, 12))
+    surface.blit(font.render(f"속도: {speed:.1f}/s", True, TEXT_COLOR), (hud_x + section * 2 + 20, 12))
+
+
+def draw_game_over(
+    surface: pygame.Surface, font: pygame.font.Font, score: int, card_surface: pygame.Surface
+) -> None:
+    """Draw the game-over overlay card with status text."""
+    overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+    overlay.fill((0, 0, 0, 170))
+    surface.blit(overlay, (0, 0))
+
+    card_rect = card_surface.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2))
+    surface.blit(card_surface, card_rect)
+
+    lines = [
+        "Game Over!",
+        f"최종 길이: {score}",
+        "R: 다시 시작 | ESC: 종료",
+    ]
+    for idx, text in enumerate(lines):
+        rendered = font.render(text, True, TEXT_COLOR)
+        text_rect = rendered.get_rect(center=(card_rect.centerx, card_rect.top + 50 + idx * 32))
+        surface.blit(rendered, text_rect)
+
+
+def update_sparks(effects: List[SparkEffect], delta_time: float, total_frames: int) -> None:
+    """Advance spark animations and remove finished instances."""
+    for effect in effects[:]:
+        effect.timer += delta_time
+        if effect.timer >= SPARK_FRAME_DURATION:
+            effect.timer -= SPARK_FRAME_DURATION
+            effect.frame_index += 1
+            if effect.frame_index >= total_frames:
+                effects.remove(effect)
+
+
+def draw_sparks(surface: pygame.Surface, frames: List[pygame.Surface], effects: List[SparkEffect]) -> None:
+    """Draw active spark animations centered on their spawn points."""
+    if not effects or not frames:
+        return
+
+    frame_width, frame_height = frames[0].get_size()
+    for effect in effects:
+        frame = frames[min(effect.frame_index, len(frames) - 1)]
+        surface.blit(
+            frame,
+            (effect.center[0] - frame_width // 2, effect.center[1] - frame_height // 2),
+        )
+
+
+def next_direction(current: Direction, queued: Deque[Direction]) -> Direction:
+    """Return the next direction, ensuring reverse turns are ignored."""
+    if not queued:
+        return current
+    proposed = queued.popleft()
+    if (proposed[0] == -current[0] and proposed[0] != 0) or (proposed[1] == -current[1] and proposed[1] != 0):
+        return current
+    return proposed
+
+
+def load_game_font(size: int) -> pygame.font.Font:
+    """Load Pretendard font if available, otherwise fall back to default."""
+    if FONT_FILE.exists():
+        try:
+            return pygame.font.Font(FONT_FILE.as_posix(), size)
+        except OSError:
+            pass
+
+    for candidate in FONT_CANDIDATES:
+        font_name = pygame.font.match_font(candidate)
+        if font_name:
+            return pygame.font.Font(font_name, size)
+
+    return pygame.font.Font(None, size)
+
+
+def run_game() -> None:
+    """Run the endless snake survival mini-game."""
+    pygame.init()
+    pygame.display.set_caption("Snake Survival")
+    screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
+    clock = pygame.time.Clock()
+    font = load_game_font(22)
+    assets = load_assets()
+
+    snake: List[Point] = [(GRID_WIDTH // 2, GRID_HEIGHT // 2)]
+    current_direction: Direction = (1, 0)
+    direction_queue: Deque[Direction] = deque()
+    food, food_variant = spawn_food(snake, len(assets.food_frames))
+    move_timer = 0.0
+    moves_per_second = INITIAL_SPEED
+    score = 1
+    best_score = 1
+    game_over = False
+    sparks: List[SparkEffect] = []
+
+    running = True
+    while running:
+        delta_ms = clock.tick(60)
+        delta_time = delta_ms / 1000
+        update_sparks(sparks, delta_time, len(assets.spark_frames))
+
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+            elif event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    running = False
+                if event.key == pygame.K_r and game_over:
+                    snake = [(GRID_WIDTH // 2, GRID_HEIGHT // 2)]
+                    current_direction = (1, 0)
+                    direction_queue.clear()
+                    food, food_variant = spawn_food(snake, len(assets.food_frames))
+                    move_timer = 0.0
+                    moves_per_second = INITIAL_SPEED
+                    score = 1
+                    game_over = False
+                    sparks.clear()
+                if not game_over:
+                    if event.key in (pygame.K_UP, pygame.K_w):
+                        direction_queue.append((0, -1))
+                    elif event.key in (pygame.K_DOWN, pygame.K_s):
+                        direction_queue.append((0, 1))
+                    elif event.key in (pygame.K_LEFT, pygame.K_a):
+                        direction_queue.append((-1, 0))
+                    elif event.key in (pygame.K_RIGHT, pygame.K_d):
+                        direction_queue.append((1, 0))
+
+        if not game_over:
+            move_timer += delta_time
+            move_interval = 1 / moves_per_second
+            if move_timer >= move_interval:
+                move_timer -= move_interval
+                current_direction = next_direction(current_direction, direction_queue)
+                head_x, head_y = snake[0]
+                new_head = (head_x + current_direction[0], head_y + current_direction[1])
+
+                if (
+                    new_head[0] < 0
+                    or new_head[0] >= GRID_WIDTH
+                    or new_head[1] < 0
+                    or new_head[1] >= GRID_HEIGHT
+                    or new_head in snake
+                ):
+                    game_over = True
+                else:
+                    snake.insert(0, new_head)
+                    if new_head == food:
+                        score += 1
+                        best_score = max(best_score, score)
+                        moves_per_second += SPEED_INCREMENT
+                        food, food_variant = spawn_food(snake, len(assets.food_frames))
+                        center = (
+                            PLAYFIELD_OFFSET_X + new_head[0] * CELL_SIZE + CELL_SIZE // 2,
+                            PLAYFIELD_OFFSET_Y + new_head[1] * CELL_SIZE + CELL_SIZE // 2,
+                        )
+                        sparks.append(SparkEffect(center=center))
+                    else:
+                        snake.pop()
+
+        draw_background(screen, assets.background_tile, assets.grid_overlay)
+        draw_snake(
+            screen,
+            snake,
+            assets.head_frames,
+            assets.body_frames,
+            assets.tail_frames,
+            current_direction,
+            assets.shadow,
+        )
+        draw_food(screen, food, assets.food_frames, food_variant, assets.shadow)
+        draw_sparks(screen, assets.spark_frames, sparks)
+        draw_hud(screen, assets.hud_panel, font, score, best_score, moves_per_second)
+
+        if game_over:
+            draw_game_over(screen, font, score, assets.game_over_card)
+
+        pygame.display.flip()
+
+    pygame.quit()
+
+
+if __name__ == "__main__":
+    run_game()
+
