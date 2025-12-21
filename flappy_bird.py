@@ -9,8 +9,8 @@ from typing import Optional
 import pygame
 
 
-SCREEN_WIDTH = 480
-SCREEN_HEIGHT = 640
+SCREEN_WIDTH = 800
+SCREEN_HEIGHT = 540
 FPS = 60
 
 BG_COLOR = (132, 205, 255)
@@ -21,22 +21,22 @@ GRAVITY = 1700.0
 JUMP_VELOCITY = -430.0
 MAX_FALL_SPEED = 900.0
 
-BIRD_X = 140
-BIRD_RADIUS = 16
+BIRD_X = 220
+BIRD_SIZE = 64
 
-GROUND_HEIGHT = 90
+GROUND_HEIGHT = 0
 CEILING_MARGIN = 8
 
 # 파이프 다양화(재미를 위해 고정값 제거)
-PIPE_WIDTH_MIN = 62
-PIPE_WIDTH_MAX = 86
+PIPE_WIDTH_MIN = 55
+PIPE_WIDTH_MAX = 55
 
 PIPE_GAP_MIN = 140
 PIPE_GAP_MAX = 216
 
 # 갭 중심 y 범위(파이프마다 gap이 달라지므로, 실제 범위는 계산 시 gap/2를 고려)
-PIPE_GAP_CENTER_MIN_Y = 150
-PIPE_GAP_CENTER_MAX_Y = SCREEN_HEIGHT - GROUND_HEIGHT - 150
+PIPE_GAP_CENTER_MIN_Y = 120
+PIPE_GAP_CENTER_MAX_Y = SCREEN_HEIGHT - GROUND_HEIGHT - 120
 
 PIPE_SPEED_BASE = 220.0
 PIPE_SPEED_PER_SCORE = 2.2
@@ -44,6 +44,7 @@ PIPE_SPAWN_INTERVAL_MIN_MS = 1050
 PIPE_SPAWN_INTERVAL_MAX_MS = 1550
 
 BEST_SCORE_FILE = Path(__file__).resolve().parent / ".flappy_best_score"
+NEW_ASSET_DIR = Path(__file__).resolve().parent / "assets" / "new" / "05. game2_naraburi"
 
 FONT_CANDIDATES = [
     "Pretendard",
@@ -79,6 +80,16 @@ def save_best_score(score: int) -> None:
         pass
 
 
+def _load_image(path: Path) -> pygame.Surface:
+    return pygame.image.load(path.as_posix()).convert_alpha()
+
+
+def _smoothscale(image: pygame.Surface, size: tuple[int, int]) -> pygame.Surface:
+    if image.get_size() == size:
+        return image
+    return pygame.transform.smoothscale(image, size)
+
+
 @dataclass
 class PipePair:
     x: float
@@ -111,7 +122,7 @@ class PipePair:
 class FlappyBirdGame:
     def __init__(self) -> None:
         pygame.init()
-        pygame.display.set_caption("플래피 버드")
+        pygame.display.set_caption("날아부리")
         self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
         self.clock = pygame.time.Clock()
 
@@ -125,7 +136,43 @@ class FlappyBirdGame:
 
         self.best_score = load_best_score()
 
+        self.use_new_assets = NEW_ASSET_DIR.exists()
+        self.bg_surface: Optional[pygame.Surface] = None
+        self.bird_surface: Optional[pygame.Surface] = None
+        self.obstacle_head_up: Optional[pygame.Surface] = None
+        self.obstacle_head_down: Optional[pygame.Surface] = None
+        self.obstacle_body: Optional[pygame.Surface] = None
+        self._load_assets()
+
         self.reset_run()
+
+    def _load_assets(self) -> None:
+        if not self.use_new_assets:
+            return
+        try:
+            bg = _load_image(NEW_ASSET_DIR / "title_background_800_540.png")
+            self.bg_surface = _smoothscale(bg, (SCREEN_WIDTH, SCREEN_HEIGHT))
+
+            bird = _load_image(NEW_ASSET_DIR / "char_flying_140_140.png")
+            self.bird_surface = _smoothscale(bird, (BIRD_SIZE, BIRD_SIZE))
+
+            # NOTE: 제공된 에셋에서 up/down 파일명이 실제 방향과 반대로 보이는 경우가 있어
+            # 게임 내에서는 "위 장애물(아래로 향함) = head_down", "아래 장애물(위로 향함) = head_up"으로
+            # 보이도록 로딩 단계에서 스왑해 맞춘다.
+            head_up = _load_image(NEW_ASSET_DIR / "obstacle_head_down_55_55.png")
+            head_down = _load_image(NEW_ASSET_DIR / "obstacle_head_up_55_55.png")
+            body = _load_image(NEW_ASSET_DIR / "obstacle_body_55_55.png")
+            self.obstacle_head_up = _smoothscale(head_up, (PIPE_WIDTH_MIN, PIPE_WIDTH_MIN))
+            self.obstacle_head_down = _smoothscale(head_down, (PIPE_WIDTH_MIN, PIPE_WIDTH_MIN))
+            self.obstacle_body = _smoothscale(body, (PIPE_WIDTH_MIN, PIPE_WIDTH_MIN))
+        except Exception:
+            # 에셋 로딩 실패 시에도 게임은 실행되게(기존 도형 렌더링으로 폴백)
+            self.use_new_assets = False
+            self.bg_surface = None
+            self.bird_surface = None
+            self.obstacle_head_up = None
+            self.obstacle_head_down = None
+            self.obstacle_body = None
 
     def reset_run(self) -> None:
         self.bird_y = float(SCREEN_HEIGHT * 0.42)
@@ -206,7 +253,10 @@ class FlappyBirdGame:
         )
 
     def bird_rect(self) -> pygame.Rect:
-        return pygame.Rect(BIRD_X - BIRD_RADIUS, int(self.bird_y) - BIRD_RADIUS, BIRD_RADIUS * 2, BIRD_RADIUS * 2)
+        half = BIRD_SIZE // 2
+        # 살짝 타이트하게 잡아 “이미지 외곽 투명 영역” 충돌을 완화
+        inset = max(6, BIRD_SIZE // 8)
+        return pygame.Rect(BIRD_X - half + inset, int(self.bird_y) - half + inset, BIRD_SIZE - inset * 2, BIRD_SIZE - inset * 2)
 
     def update_play(self, dt: float) -> None:
         speed = PIPE_SPEED_BASE + PIPE_SPEED_PER_SCORE * self.score
@@ -245,13 +295,14 @@ class FlappyBirdGame:
         self.pipes = [p for p in self.pipes if not p.is_off_screen()]
 
         # 점수: 파이프 중앙을 지나가면 +1
+        br = self.bird_rect()
         for pipe in self.pipes:
-            if not pipe.passed and pipe.x + pipe.width < BIRD_X - BIRD_RADIUS:
+            # 새 사이즈/인셋에 관계없이 실제 충돌 박스 기준으로 “지나갔다”를 판정
+            if not pipe.passed and pipe.x + pipe.width < br.left:
                 pipe.passed = True
                 self.score += 1
 
         # 충돌 판정
-        br = self.bird_rect()
         if br.top <= CEILING_MARGIN:
             self.game_over_reason = "천장에 부딪혔어요!"
             self.state = "gameover"
@@ -263,7 +314,7 @@ class FlappyBirdGame:
 
         for pipe in self.pipes:
             if br.colliderect(pipe.rect_top()) or br.colliderect(pipe.rect_bottom()):
-                self.game_over_reason = "파이프에 부딪혔어요!"
+                self.game_over_reason = "장애물에 부딪혔어요!"
                 self.state = "gameover"
                 return
 
@@ -271,6 +322,10 @@ class FlappyBirdGame:
     # 렌더링
     # -------------------
     def draw_background(self) -> None:
+        if self.use_new_assets and self.bg_surface is not None:
+            self.screen.blit(self.bg_surface, (0, 0))
+            return
+
         self.screen.fill(BG_COLOR)
 
         # 간단한 구름(배경 스크롤)
@@ -283,8 +338,58 @@ class FlappyBirdGame:
             pygame.draw.circle(self.screen, cloud_color, (cx + 28, cy - 8), 18)
             pygame.draw.circle(self.screen, cloud_color, (cx + 52, cy + 6), 16)
 
+    def _draw_obstacle_column(self, rect: pygame.Rect, *, facing: str) -> None:
+        """장애물 컬럼을 이미지(머리/몸통)로 그린다. facing: 'down'(위 장애물) | 'up'(아래 장애물)."""
+        assert self.obstacle_body is not None
+        assert self.obstacle_head_up is not None
+        assert self.obstacle_head_down is not None
+
+        tile = PIPE_WIDTH_MIN
+        x = rect.x
+
+        # 타일 단위로 반복해서 그리면, 마지막 몸통 타일이 머리 영역까지 겹쳐 그려지는 경우가 있다.
+        # 따라서 몸통을 그릴 때는 "머리 영역을 제외한 영역"으로 클리핑해서 절대 튀어나오지 않게 한다.
+        prev_clip = self.screen.get_clip()
+        try:
+            if facing == "down":
+                # 위 장애물: 아래쪽 끝에 head_down, 그 위로 body 타일링
+                head_y = rect.bottom - tile
+                body_area = pygame.Rect(rect.x, rect.y, rect.width, max(0, rect.height - tile))
+                self.screen.set_clip(body_area)
+                for y in range(rect.y, head_y, tile):
+                    self.screen.blit(self.obstacle_body, (x, y))
+                self.screen.set_clip(prev_clip)
+                self.screen.blit(self.obstacle_head_down, (x, head_y))
+            else:
+                # 아래 장애물: 위쪽 끝에 head_up, 그 아래로 body 타일링
+                head_y = rect.y
+                self.screen.blit(self.obstacle_head_up, (x, head_y))
+                body_area = pygame.Rect(rect.x, rect.y + tile, rect.width, max(0, rect.height - tile))
+                self.screen.set_clip(body_area)
+                for y in range(rect.y + tile, rect.bottom, tile):
+                    self.screen.blit(self.obstacle_body, (x, y))
+        finally:
+            self.screen.set_clip(prev_clip)
+
     def draw_pipes(self) -> None:
         for pipe in self.pipes:
+            rt = pipe.rect_top()
+            rb = pipe.rect_bottom()
+
+            if self.use_new_assets and self.obstacle_body and self.obstacle_head_up and self.obstacle_head_down:
+                # 새 디자인: 뱀(장애물) 이미지로 렌더링
+                # rect 높이가 타일보다 작으면 머리만 배치
+                if rt.height >= PIPE_WIDTH_MIN:
+                    self._draw_obstacle_column(rt, facing="down")
+                else:
+                    self.screen.blit(self.obstacle_head_down, (rt.x, max(0, rt.bottom - PIPE_WIDTH_MIN)))
+
+                if rb.height >= PIPE_WIDTH_MIN:
+                    self._draw_obstacle_column(rb, facing="up")
+                else:
+                    self.screen.blit(self.obstacle_head_up, (rb.x, rb.y))
+                continue
+
             # 움직이는 파이프는 시각적으로 확실히 구분(파란색)해서 억까 느낌을 줄인다.
             if pipe.moving_amp > 0.0:
                 pipe_fill = (92, 165, 255)
@@ -293,8 +398,6 @@ class FlappyBirdGame:
                 pipe_fill = (64, 200, 110)
                 pipe_edge = (20, 80, 40)
 
-            rt = pipe.rect_top()
-            rb = pipe.rect_bottom()
             pygame.draw.rect(self.screen, pipe_fill, rt, border_radius=10)
             pygame.draw.rect(self.screen, pipe_edge, rt, width=3, border_radius=10)
             pygame.draw.rect(self.screen, pipe_fill, rb, border_radius=10)
@@ -310,6 +413,8 @@ class FlappyBirdGame:
             pygame.draw.rect(self.screen, pipe_edge, rim_bottom, width=3, border_radius=8)
 
     def draw_ground(self) -> None:
+        if GROUND_HEIGHT <= 0:
+            return
         ground_y = SCREEN_HEIGHT - GROUND_HEIGHT
         pygame.draw.rect(self.screen, (235, 220, 170), pygame.Rect(0, ground_y, SCREEN_WIDTH, GROUND_HEIGHT))
         pygame.draw.rect(self.screen, (120, 90, 60), pygame.Rect(0, ground_y, SCREEN_WIDTH, GROUND_HEIGHT), width=3)
@@ -329,16 +434,24 @@ class FlappyBirdGame:
         # 속도에 따라 약간 기울기
         angle = max(-28.0, min(42.0, -self.bird_vy * 0.06))
         cx, cy = BIRD_X, int(self.bird_y)
-        body = pygame.Surface((BIRD_RADIUS * 2 + 10, BIRD_RADIUS * 2 + 10), pygame.SRCALPHA)
-        pygame.draw.circle(body, (255, 220, 60), (BIRD_RADIUS + 5, BIRD_RADIUS + 5), BIRD_RADIUS)
-        pygame.draw.circle(body, (40, 40, 40), (BIRD_RADIUS + 10, BIRD_RADIUS + 1), 3)  # 눈
+
+        if self.use_new_assets and self.bird_surface is not None:
+            rotated = pygame.transform.rotate(self.bird_surface, angle)
+            r = rotated.get_rect(center=(cx, cy))
+            self.screen.blit(rotated, r)
+            return
+
+        # 폴백: 간단한 도형 새
+        body = pygame.Surface((BIRD_SIZE + 10, BIRD_SIZE + 10), pygame.SRCALPHA)
+        pygame.draw.circle(body, (255, 220, 60), (BIRD_SIZE // 2 + 5, BIRD_SIZE // 2 + 5), BIRD_SIZE // 2)
+        pygame.draw.circle(body, (40, 40, 40), (BIRD_SIZE // 2 + 10, BIRD_SIZE // 2 - 5), 3)  # 눈
         pygame.draw.polygon(
             body,
             (255, 140, 60),
             [
-                (BIRD_RADIUS + 18, BIRD_RADIUS + 6),
-                (BIRD_RADIUS + 30, BIRD_RADIUS + 10),
-                (BIRD_RADIUS + 18, BIRD_RADIUS + 14),
+                (BIRD_SIZE // 2 + 18, BIRD_SIZE // 2 + 6),
+                (BIRD_SIZE // 2 + 30, BIRD_SIZE // 2 + 10),
+                (BIRD_SIZE // 2 + 18, BIRD_SIZE // 2 + 14),
             ],
         )
         rotated = pygame.transform.rotate(body, angle)
@@ -354,11 +467,11 @@ class FlappyBirdGame:
     def draw_title(self) -> None:
         self.draw_background()
         self.draw_ground()
-        title = self.font_title.render("플래피 버드", True, (20, 20, 20))
+        title = self.font_title.render("날아부리", True, (20, 20, 20))
         self.screen.blit(title, title.get_rect(center=(SCREEN_WIDTH // 2, 220)))
         self.screen.blit(
             self.font.render("스페이스/아무 키/클릭/터치로 시작", True, (40, 40, 40)),
-            (80, 280),
+            (240, 280),
         )
         self.screen.blit(self.font_small.render("ESC: 종료", True, (70, 70, 70)), (14, 34))
         # 미리보기 새

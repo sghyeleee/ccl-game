@@ -24,6 +24,7 @@ TEXT_COLOR = (240, 240, 240)
 INITIAL_SPEED = 8  # moves per second
 SPEED_INCREMENT = 0.15
 ASSET_DIR = Path(__file__).resolve().parent / "assets" / "snake_survival"
+NEW_ASSET_DIR = Path(__file__).resolve().parent / "assets" / "new" / "06.game3_dolyuburi"
 FONT_FILE = ASSET_DIR / "Pretendard-Regular.ttf"
 FONT_CANDIDATES = (
     "Pretendard",
@@ -83,10 +84,17 @@ class SparkEffect:
     timer: float = 0.0
 
 
-def load_image(name: str) -> pygame.Surface:
+def load_image(name: str, *, base_dir: Path = ASSET_DIR) -> pygame.Surface:
     """Load a single image from the asset directory with alpha support."""
-    path = ASSET_DIR / name
+    path = base_dir / name
     return pygame.image.load(path.as_posix()).convert_alpha()
+
+
+def scale_to_cell(image: pygame.Surface) -> pygame.Surface:
+    """Scale an arbitrary sprite image to the current CELL_SIZE."""
+    if image.get_width() == CELL_SIZE and image.get_height() == CELL_SIZE:
+        return image
+    return pygame.transform.smoothscale(image, (CELL_SIZE, CELL_SIZE))
 
 
 def slice_sheet(sheet: pygame.Surface, frame_width: int, frame_height: int) -> List[pygame.Surface]:
@@ -101,10 +109,44 @@ def slice_sheet(sheet: pygame.Surface, frame_width: int, frame_height: int) -> L
 
 def load_assets() -> SpriteAssets:
     """Load all required sprite assets for the game."""
-    head_frames = slice_sheet(load_image("snake_head.png"), CELL_SIZE, CELL_SIZE)
-    body_frames = slice_sheet(load_image("snake_body.png"), CELL_SIZE, CELL_SIZE)
-    tail_frames = slice_sheet(load_image("snake_tail.png"), CELL_SIZE, CELL_SIZE)
-    food_frames = slice_sheet(load_image("food_fruit_sheet.png"), CELL_SIZE, CELL_SIZE)
+    # New theme assets (친구 구출 컨셉)
+    use_new = NEW_ASSET_DIR.exists()
+    if use_new:
+        # 플레이어(머리)는 파란 캐릭터를 우선 사용하고, 파일이 없으면 기본 캐릭터로 폴백한다.
+        head_prefix = "char_blue" if (NEW_ASSET_DIR / "char_blue_head_up_140_140.png").exists() else "char_default"
+        head_frames = []
+        for dir_key in ("up", "down", "left", "right"):
+            candidate = f"{head_prefix}_head_{dir_key}_140_140.png"
+            fallback = f"char_default_head_{dir_key}_140_140.png"
+            filename = candidate if (NEW_ASSET_DIR / candidate).exists() else fallback
+            head_frames.append(scale_to_cell(load_image(filename, base_dir=NEW_ASSET_DIR)))
+        # 몸통/꼬리는 “친구들” 이미지로 교체 (방향/코너 스프라이트가 없어서 색상 3종을 순환 사용)
+        friend_variants = [
+            scale_to_cell(load_image("char_blue_140_140.png", base_dir=NEW_ASSET_DIR)),
+            scale_to_cell(load_image("char_red_140_140.png", base_dir=NEW_ASSET_DIR)),
+            scale_to_cell(load_image("char_yell_140_140.png", base_dir=NEW_ASSET_DIR)),
+        ]
+        body_frames = friend_variants
+        tail_frames = friend_variants
+        food_frames = [scale_to_cell(load_image("item_gohome_140_140.png", base_dir=NEW_ASSET_DIR))]
+
+        # 배경은 800x540 전체 배경 1장을 사용
+        background_tile = load_image("tile_background_800_540.png", base_dir=NEW_ASSET_DIR)
+        if background_tile.get_size() != (SCREEN_WIDTH, SCREEN_HEIGHT):
+            background_tile = pygame.transform.smoothscale(background_tile, (SCREEN_WIDTH, SCREEN_HEIGHT))
+    else:
+        # Legacy snake assets
+        head_frames = slice_sheet(load_image("snake_head.png"), CELL_SIZE, CELL_SIZE)
+        body_frames = slice_sheet(load_image("snake_body.png"), CELL_SIZE, CELL_SIZE)
+        tail_frames = slice_sheet(load_image("snake_tail.png"), CELL_SIZE, CELL_SIZE)
+        food_frames = slice_sheet(load_image("food_fruit_sheet.png"), CELL_SIZE, CELL_SIZE)
+        background_tile = load_image("background_tile.png")
+
+    # Keep legacy UI/effects (new pack doesn't include these)
+    grid_overlay = load_image("grid_overlay.png")
+    hud_panel = load_image("hud_panel.png")
+    game_over_card = load_image("game_over_card.png")
+    shadow = load_image("shadow_ellipse.png")
     spark_sheet = load_image("spark_effect.png")
     spark_frame_width = spark_sheet.get_width() // 4
     spark_frames = slice_sheet(spark_sheet, spark_frame_width, spark_sheet.get_height())
@@ -114,11 +156,11 @@ def load_assets() -> SpriteAssets:
         body_frames=body_frames,
         tail_frames=tail_frames,
         food_frames=food_frames,
-        background_tile=load_image("background_tile.png"),
-        grid_overlay=load_image("grid_overlay.png"),
-        hud_panel=load_image("hud_panel.png"),
-        game_over_card=load_image("game_over_card.png"),
-        shadow=load_image("shadow_ellipse.png"),
+        background_tile=background_tile,
+        grid_overlay=grid_overlay,
+        hud_panel=hud_panel,
+        game_over_card=game_over_card,
+        shadow=shadow,
         spark_frames=spark_frames,
     )
 
@@ -161,10 +203,14 @@ def draw_background(
 ) -> None:
     """Render the textured background and apply the grid overlay pattern."""
     surface.fill(BACKGROUND_COLOR)
-    tile_width, tile_height = background_tile.get_size()
-    for x in range(0, SCREEN_WIDTH, tile_width):
-        for y in range(0, SCREEN_HEIGHT, tile_height):
-            surface.blit(background_tile, (x, y))
+    # If the background asset is a full-screen image, blit once; otherwise tile it.
+    if background_tile.get_width() >= SCREEN_WIDTH and background_tile.get_height() >= SCREEN_HEIGHT:
+        surface.blit(background_tile, (0, 0))
+    else:
+        tile_width, tile_height = background_tile.get_size()
+        for x in range(0, SCREEN_WIDTH, tile_width):
+            for y in range(0, SCREEN_HEIGHT, tile_height):
+                surface.blit(background_tile, (x, y))
 
     for x in range(0, GRID_PIXEL_WIDTH, CELL_SIZE):
         for y in range(0, GRID_PIXEL_HEIGHT, CELL_SIZE):
@@ -203,13 +249,21 @@ def draw_snake(
             prev_segment = snake[idx - 1]
             tail_direction = direction_between(segment, prev_segment)
             direction_index = DIRECTION_TO_INDEX.get(tail_direction, DIRECTION_TO_INDEX[RIGHT])
-            surface.blit(tail_frames[direction_index], pixel)
+            # New friend-theme uses non-directional tail sprites; legacy uses directional sheets.
+            if len(tail_frames) >= 4:
+                surface.blit(tail_frames[direction_index], pixel)
+            else:
+                surface.blit(tail_frames[idx % len(tail_frames)], pixel)
             continue
 
         prev_segment = snake[idx - 1]
         next_segment = snake[idx + 1]
         frame_idx = body_frame_index(prev_segment, segment, next_segment)
-        surface.blit(body_frames[frame_idx], pixel)
+        # New friend-theme uses a small set of variants; legacy uses indexed frames.
+        if len(body_frames) >= 6:
+            surface.blit(body_frames[frame_idx], pixel)
+        else:
+            surface.blit(body_frames[idx % len(body_frames)], pixel)
 
 
 def draw_food(
@@ -243,7 +297,7 @@ def draw_hud(
     surface.blit(hud_panel, (hud_x, 0))
 
     section = hud_width // 3
-    surface.blit(font.render(f"길이: {score}", True, TEXT_COLOR), (hud_x + 20, 12))
+    surface.blit(font.render(f"친구 수: {score}", True, TEXT_COLOR), (hud_x + 20, 12))
     surface.blit(font.render(f"최고: {best}", True, TEXT_COLOR), (hud_x + section + 20, 12))
     surface.blit(font.render(f"속도: {speed:.1f}/s", True, TEXT_COLOR), (hud_x + section * 2 + 20, 12))
 
@@ -260,8 +314,8 @@ def draw_game_over(
     surface.blit(card_surface, card_rect)
 
     lines = [
-        "Game Over!",
-        f"최종 길이: {score}",
+        "게임 오버!",
+        f"구한 친구 수: {score}",
         "R: 다시 시작 | ESC: 종료",
     ]
     for idx, text in enumerate(lines):
@@ -321,10 +375,10 @@ def load_game_font(size: int) -> pygame.font.Font:
     return pygame.font.Font(None, size)
 
 
-def run_game() -> None:
+def run_game(*, quit_on_exit: bool = True) -> None:
     """Run the endless snake survival mini-game."""
     pygame.init()
-    pygame.display.set_caption("Snake Survival")
+    pygame.display.set_caption("친구 구출")
     screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
     clock = pygame.time.Clock()
     font = load_game_font(22)
@@ -424,7 +478,8 @@ def run_game() -> None:
 
         pygame.display.flip()
 
-    pygame.quit()
+    if quit_on_exit:
+        pygame.quit()
 
 
 if __name__ == "__main__":

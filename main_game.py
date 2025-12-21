@@ -91,8 +91,16 @@ def get_game_entries() -> List[GameEntry]:
             "탭으로 날아올라 파이프 사이를 통과하세요. 부딪히면 게임오버!",
             lambda: run_flappy_bird(quit_on_exit=False),
         ),
-        GameEntry("Snake Survival", "먹이를 먹고 몸을 늘리며 오래 살아남으세요.", lambda: run_snake(quit_on_exit=False)),
-        GameEntry("Sugar Game", "각설탕을 쌓아 높이 올리세요. 너무 높아지면 게임오버!", lambda: run_sugar_game(quit_on_exit=False)),
+        GameEntry(
+            "Snake Survival",
+            "친구를 구해 내 등 뒤에 붙이세요! (동작은 뱀 게임과 같아요)",
+            lambda: run_snake(quit_on_exit=False),
+        ),
+        GameEntry(
+            "Sugar Game",
+            "햄버거 재료를 쌓아 높이 올리세요. 중심을 잃으면 게임오버!",
+            lambda: run_sugar_game(quit_on_exit=False),
+        ),
     ]
 
 

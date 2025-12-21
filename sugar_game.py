@@ -11,22 +11,22 @@ import pygame
 # =========================
 # 기본 설정
 # =========================
-SCREEN_WIDTH = 400
-SCREEN_HEIGHT = 600
+SCREEN_WIDTH = 800
+SCREEN_HEIGHT = 540
 FPS = 60
 
 BG_COLOR = (210, 235, 255)
 TEXT_COLOR = (25, 25, 25)
 SHADOW = (0, 0, 0, 90)
 
-CUBE_SIZE = 54
-BASE_WIDTH = 260
-BASE_HEIGHT = 22
+CUBE_SIZE = 64
+BASE_WIDTH = 420
+BASE_HEIGHT = 42
 
 GRAVITY = 1400.0
 # 화면 내 고정 위치(카메라 적용 전, 스크린 좌표 기준)
-CARRIER_SCREEN_Y = 86
-HELD_CUBE_SCREEN_Y = 130
+CARRIER_SCREEN_Y = 72
+HELD_CUBE_SCREEN_Y = 122
 
 # 스택 최상단이 이 y(스크린)보다 위로 올라가려 하면 카메라가 위로 스크롤된다.
 # (요정/스택이 겹치지 않도록 “화면 절반 정도 거리” 확보 목적)
@@ -55,6 +55,7 @@ SNAP_TO_TARGET_PX = 4
 COM_MARGIN_PX = 6
 
 BEST_SCORE_FILE = Path(__file__).resolve().parent / ".sugar_best_score"
+NEW_ASSET_DIR = Path(__file__).resolve().parent / "assets" / "new" / "04. game1_ssaaburi"
 
 FONT_CANDIDATES = [
     "Pretendard",
@@ -110,6 +111,7 @@ class Cube:
     rect: pygame.Rect
     is_falling: bool = False
     vel_y: float = 0.0
+    kind: int = 0
 
     def update(self, dt: float) -> None:
         if not self.is_falling:
@@ -121,26 +123,58 @@ class Cube:
 class SugarStackGame:
     def __init__(self) -> None:
         pygame.init()
-        pygame.display.set_caption("각설탕 쌓기")
+        pygame.display.set_caption("햄버거 쌓기")
         self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
         self.clock = pygame.time.Clock()
 
-        self.font_title = get_font(40, bold=True)
-        self.font_big = get_font(54, bold=True)
-        self.font = get_font(20)
-        self.font_small = get_font(16)
+        self.font_title = get_font(46, bold=True)
+        self.font_big = get_font(64, bold=True)
+        self.font = get_font(22)
+        self.font_small = get_font(18)
 
         self.state: str = "title"  # title | howto | play | gameover
         self.running = True
 
         self.best_score = load_best_score()
 
-        # UI 버튼
-        self.btn_start = pygame.Rect(110, 320, 180, 54)
-        self.btn_howto = pygame.Rect(110, 388, 180, 54)
-        self.btn_back = pygame.Rect(18, 18, 86, 40)
+        # New theme assets (햄버거 쌓기)
+        self.use_new_assets = NEW_ASSET_DIR.exists()
+        self.bg_surface: Optional[pygame.Surface] = None
+        self.dish_surface: Optional[pygame.Surface] = None
+        self.food_surfaces: list[pygame.Surface] = []
+        self._load_assets()
+
+        # UI 버튼(가로 화면 기준)
+        btn_w, btn_h = 240, 62
+        btn_x = (SCREEN_WIDTH - btn_w) // 2
+        self.btn_start = pygame.Rect(btn_x, 300, btn_w, btn_h)
+        self.btn_howto = pygame.Rect(btn_x, 378, btn_w, btn_h)
+        self.btn_back = pygame.Rect(26, 22, 110, 46)
 
         self.reset_game()
+
+    def _load_assets(self) -> None:
+        if not self.use_new_assets:
+            return
+        try:
+            bg = pygame.image.load((NEW_ASSET_DIR / "title_background_800_540.png").as_posix()).convert_alpha()
+            self.bg_surface = pygame.transform.smoothscale(bg, (SCREEN_WIDTH, SCREEN_HEIGHT))
+
+            dish = pygame.image.load((NEW_ASSET_DIR / "game1_dish_45_32.png").as_posix()).convert_alpha()
+            self.dish_surface = pygame.transform.smoothscale(dish, (BASE_WIDTH, BASE_HEIGHT))
+
+            food1 = pygame.image.load((NEW_ASSET_DIR / "game1_food_1_140_140.png").as_posix()).convert_alpha()
+            food2 = pygame.image.load((NEW_ASSET_DIR / "game1_food_2_140_140.png").as_posix()).convert_alpha()
+            self.food_surfaces = [
+                pygame.transform.smoothscale(food1, (CUBE_SIZE, CUBE_SIZE)),
+                pygame.transform.smoothscale(food2, (CUBE_SIZE, CUBE_SIZE)),
+            ]
+        except Exception:
+            # 에셋이 깨져도 게임은 동작하도록 폴백
+            self.use_new_assets = False
+            self.bg_surface = None
+            self.dish_surface = None
+            self.food_surfaces = []
 
     # -------------------------
     # 게임 리셋/스폰
@@ -150,14 +184,19 @@ class SugarStackGame:
         # 시작 시엔 0으로 두어 월드=스크린처럼 보이게 한다.
         self.camera_y = 0.0
 
-        base_y = SCREEN_HEIGHT - 64
+        base_y = SCREEN_HEIGHT - 68
         base_x = (SCREEN_WIDTH - BASE_WIDTH) // 2
         self.base_rect = pygame.Rect(base_x, base_y, BASE_WIDTH, BASE_HEIGHT)
 
         # “탑”은 배치된 큐브 리스트(아래→위)
         first_cube_x = (SCREEN_WIDTH - CUBE_SIZE) // 2
         first_cube_y = self.base_rect.top - CUBE_SIZE
-        self.stack: list[Cube] = [Cube(pygame.Rect(first_cube_x, first_cube_y, CUBE_SIZE, CUBE_SIZE), is_falling=False)]
+        first_kind = 0
+        if self.food_surfaces:
+            first_kind = int(pygame.time.get_ticks()) % len(self.food_surfaces)
+        self.stack: list[Cube] = [
+            Cube(pygame.Rect(first_cube_x, first_cube_y, CUBE_SIZE, CUBE_SIZE), is_falling=False, kind=first_kind)
+        ]
 
         self.level = 1
         self.score = 1  # 첫 큐브를 1층으로 취급
@@ -172,17 +211,25 @@ class SugarStackGame:
         self.carrier_speed = 0.0
 
         # 현재 들고 있는 큐브
+        held_kind = 0
+        if self.food_surfaces:
+            held_kind = (first_kind + 1) % len(self.food_surfaces)
         self.held_cube = Cube(
             pygame.Rect(int(self.carrier_x), int(self.camera_y + HELD_CUBE_SCREEN_Y), CUBE_SIZE, CUBE_SIZE),
             is_falling=False,
+            kind=held_kind,
         )
 
         self.game_over_reason: Optional[str] = None
 
     def spawn_held_cube(self) -> None:
+        kind = 0
+        if self.food_surfaces:
+            kind = (pygame.time.get_ticks() // 110) % len(self.food_surfaces)
         self.held_cube = Cube(
             pygame.Rect(int(self.carrier_x), int(self.camera_y + HELD_CUBE_SCREEN_Y), CUBE_SIZE, CUBE_SIZE),
             is_falling=False,
+            kind=int(kind),
         )
 
     def update_camera(self) -> None:
@@ -250,7 +297,7 @@ class SugarStackGame:
 
         overlap_ratio = self._compute_overlap_ratio(top, self.held_cube.rect)
         if overlap_ratio <= 0.0:
-            self.game_over_reason = "각설탕이 떨어졌어요!"
+            self.game_over_reason = "재료가 떨어졌어요!"
             self.state = "gameover"
             return
 
@@ -261,7 +308,7 @@ class SugarStackGame:
             return
 
         # 정상 배치
-        self.stack.append(Cube(self.held_cube.rect.copy(), is_falling=False))
+        self.stack.append(Cube(self.held_cube.rect.copy(), is_falling=False, kind=self.held_cube.kind))
         self.score += 1
         self.level = self.score
 
@@ -330,7 +377,7 @@ class SugarStackGame:
         # 따라서 "스택 블록이 화면 아래로 내려갔다"는 조건으로 게임오버를 내면 오작동한다.
         # 대신, 낙하 중인 블록이 화면 아래로 완전히 떨어져 나가는 경우만 실패로 처리한다.
         if self.held_cube.is_falling and self.held_cube.rect.top > int(self.camera_y + SCREEN_HEIGHT + 80):
-            self.game_over_reason = "각설탕이 떨어졌어요!"
+            self.game_over_reason = "재료가 떨어졌어요!"
             self.state = "gameover"
             return
 
@@ -341,6 +388,10 @@ class SugarStackGame:
     # 렌더링
     # -------------------------
     def draw_background(self) -> None:
+        if self.use_new_assets and self.bg_surface is not None:
+            self.screen.blit(self.bg_surface, (0, 0))
+            return
+
         self.screen.fill(BG_COLOR)
         # 간단한 구름 느낌
         pygame.draw.circle(self.screen, (235, 248, 255), (70, 70), 28)
@@ -351,10 +402,18 @@ class SugarStackGame:
 
     def draw_base(self) -> None:
         rect = self.base_rect.move(0, -int(self.camera_y))
+        if self.use_new_assets and self.dish_surface is not None:
+            self.screen.blit(self.dish_surface, rect.topleft)
+            return
         pygame.draw.rect(self.screen, (220, 190, 140), rect, border_radius=10)
         pygame.draw.rect(self.screen, (80, 60, 40), rect, width=2, border_radius=10)
 
-    def draw_cube(self, rect: pygame.Rect, shade: Tuple[int, int, int]) -> None:
+    def draw_cube(self, rect: pygame.Rect, shade: Tuple[int, int, int], *, kind: int = 0) -> None:
+        if self.use_new_assets and self.food_surfaces:
+            surface = self.food_surfaces[kind % len(self.food_surfaces)]
+            self.screen.blit(surface, rect.topleft)
+            return
+
         pygame.draw.rect(self.screen, shade, rect, border_radius=8)
         pygame.draw.rect(self.screen, (70, 70, 70), rect, width=2, border_radius=8)
         # 하이라이트
@@ -377,7 +436,7 @@ class SugarStackGame:
         # 중앙 큰 숫자(원작 감성: 층수=점수)
         score_text = str(self.score)
         rendered = self.font_big.render(score_text, True, (35, 35, 35))
-        rect = rendered.get_rect(center=(SCREEN_WIDTH // 2, 240))
+        rect = rendered.get_rect(center=(SCREEN_WIDTH // 2, 220))
         self.screen.blit(rendered, rect)
 
         self.screen.blit(self.font_small.render(f"최고: {self.best_score}", True, (40, 40, 40)), (14, 10))
@@ -396,33 +455,33 @@ class SugarStackGame:
             shift = int(x_shift_per_level * idx)
             rect_world = cube.rect.move(shift, 0)
             rect_screen = rect_world.move(0, -int(self.camera_y))
-            self.draw_cube(rect_screen, (255, 255, 255))
+            self.draw_cube(rect_screen, (255, 255, 255), kind=cube.kind)
 
         # 낙하 중/대기 중인 큐브
         if self.state == "play":
-            self.draw_cube(self.held_cube.rect.move(0, -int(self.camera_y)), (252, 252, 252))
+            self.draw_cube(self.held_cube.rect.move(0, -int(self.camera_y)), (252, 252, 252), kind=self.held_cube.kind)
 
     def draw_title(self) -> None:
         self.draw_background()
-        draw_text_center(self.screen, self.font_title, "각설탕 쌓기", 170)
-        draw_text_center(self.screen, self.font, "원버튼 타이밍으로 탑을 쌓아보세요", 210, color=(60, 60, 60))
+        draw_text_center(self.screen, self.font_title, "햄버거 쌓기", 150)
+        draw_text_center(self.screen, self.font, "원버튼 타이밍으로 탑을 쌓아보세요", 195, color=(60, 60, 60))
 
         for rect, label in [(self.btn_start, "게임시작"), (self.btn_howto, "게임방법")]:
             draw_card(self.screen, rect)
             draw_text_center(self.screen, self.font, label, rect.centery)
 
-        draw_text_center(self.screen, self.font_small, "ESC: 종료", 560, color=(70, 70, 70))
+        draw_text_center(self.screen, self.font_small, "ESC: 종료", SCREEN_HEIGHT - 26, color=(70, 70, 70))
 
     def draw_howto(self) -> None:
         self.draw_background()
-        draw_text_center(self.screen, self.font_title, "게임방법", 150)
+        draw_text_center(self.screen, self.font_title, "게임방법", 120)
 
-        card = pygame.Rect(42, 200, 316, 210)
+        card = pygame.Rect((SCREEN_WIDTH - 520) // 2, 170, 520, 240)
         draw_card(self.screen, card)
 
         lines = [
             "버튼(스페이스/클릭/터치)을 누르면",
-            "각설탕이 떨어집니다.",
+            "재료가 떨어집니다.",
             "",
             "중심을 잃고 쓰러지면 게임오버입니다.",
             "높아질수록 요정 이동 속도가 빨라져요.",
@@ -452,7 +511,7 @@ class SugarStackGame:
         overlay.fill((0, 0, 0, 120))
         self.screen.blit(overlay, (0, 0))
 
-        card = pygame.Rect(40, 170, 320, 240)
+        card = pygame.Rect((SCREEN_WIDTH - 560) // 2, 150, 560, 260)
         draw_card(self.screen, card)
 
         draw_text_center(self.screen, self.font_title, "게임오버", card.top + 52)
@@ -466,7 +525,7 @@ class SugarStackGame:
     # -------------------------
     # 메인 루프
     # -------------------------
-    def run(self) -> None:
+    def run(self, quit_on_exit: bool = True) -> None:
         while self.running:
             dt_ms = self.clock.tick(FPS)
             dt = dt_ms / 1000.0
@@ -534,11 +593,12 @@ class SugarStackGame:
 
             pygame.display.flip()
 
-        pygame.quit()
+        if quit_on_exit:
+            pygame.quit()
 
 
-def run_game() -> None:
-    SugarStackGame().run()
+def run_game(*, quit_on_exit: bool = True) -> None:
+    SugarStackGame().run(quit_on_exit=quit_on_exit)
 
 
 if __name__ == "__main__":
