@@ -7,6 +7,7 @@ from typing import Optional, Tuple
 
 import pygame
 
+from ui_common import draw_game_over_ui
 
 # =========================
 # 기본 설정
@@ -56,6 +57,8 @@ COM_MARGIN_PX = 6
 
 BEST_SCORE_FILE = Path(__file__).resolve().parent / ".sugar_best_score"
 NEW_ASSET_DIR = Path(__file__).resolve().parent / "assets" / "new" / "04. game1_ssaaburi"
+FONT_DIR = Path(__file__).resolve().parent / "assets" / "fonts"
+NEODGM_FONT_FILE = FONT_DIR / "neodgm.ttf"
 
 FONT_CANDIDATES = [
     "Pretendard",
@@ -68,6 +71,11 @@ FONT_CANDIDATES = [
 
 
 def get_font(size: int, bold: bool = False) -> pygame.font.Font:
+    if NEODGM_FONT_FILE.exists():
+        try:
+            return pygame.font.Font(NEODGM_FONT_FILE.as_posix(), size)
+        except OSError:
+            pass
     for name in FONT_CANDIDATES:
         font_path = pygame.font.match_font(name, bold=bold)
         if font_path:
@@ -123,7 +131,7 @@ class Cube:
 class SugarStackGame:
     def __init__(self) -> None:
         pygame.init()
-        pygame.display.set_caption("햄버거 쌓기")
+        pygame.display.set_caption("쌓아부리")
         self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
         self.clock = pygame.time.Clock()
 
@@ -137,7 +145,7 @@ class SugarStackGame:
 
         self.best_score = load_best_score()
 
-        # New theme assets (햄버거 쌓기)
+        # New theme assets (쌓아부리)
         self.use_new_assets = NEW_ASSET_DIR.exists()
         self.bg_surface: Optional[pygame.Surface] = None
         self.dish_surface: Optional[pygame.Surface] = None
@@ -463,7 +471,7 @@ class SugarStackGame:
 
     def draw_title(self) -> None:
         self.draw_background()
-        draw_text_center(self.screen, self.font_title, "햄버거 쌓기", 150)
+        draw_text_center(self.screen, self.font_title, "쌓아부리", 150)
         draw_text_center(self.screen, self.font, "원버튼 타이밍으로 탑을 쌓아보세요", 195, color=(60, 60, 60))
 
         for rect, label in [(self.btn_start, "게임시작"), (self.btn_howto, "게임방법")]:
@@ -507,20 +515,16 @@ class SugarStackGame:
 
     def draw_gameover(self) -> None:
         self.draw_play()
-        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
-        overlay.fill((0, 0, 0, 120))
-        self.screen.blit(overlay, (0, 0))
-
-        card = pygame.Rect((SCREEN_WIDTH - 560) // 2, 150, 560, 260)
-        draw_card(self.screen, card)
-
-        draw_text_center(self.screen, self.font_title, "게임오버", card.top + 52)
-        reason = self.game_over_reason or "무너졌어요!"
-        draw_text_center(self.screen, self.font, reason, card.top + 94, color=(60, 60, 60))
-
-        draw_text_center(self.screen, self.font_big, str(self.score), card.top + 155)
-        draw_text_center(self.screen, self.font_small, f"최고 기록: {self.best_score}", card.top + 198, color=(70, 70, 70))
-        draw_text_center(self.screen, self.font_small, "R: 재시작   ENTER: 타이틀", card.top + 222, color=(70, 70, 70))
+        draw_game_over_ui(
+            self.screen,
+            font_title=self.font_title,
+            font=self.font,
+            font_small=self.font_small,
+            reason=self.game_over_reason or "무너졌어요!",
+            score=self.score,
+            best_score=self.best_score,
+            hint="R: 재시작   ENTER: 타이틀",
+        )
 
     # -------------------------
     # 메인 루프

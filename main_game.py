@@ -27,14 +27,16 @@ INACTIVE_TEXT = (130, 130, 142)
 PROGRESS_BG = (223, 223, 230)
 PROGRESS_FILL = (69, 94, 220)
 STATUS_COLOR = (238, 94, 42)
-COUNTDOWN_BG = (16, 18, 32)
-COUNTDOWN_TEXT = (255, 255, 255)
-COUNTDOWN_SECONDS = 3
-COUNTDOWN_DURATION_MS = COUNTDOWN_SECONDS * 1000
 ASSET_DIR = Path(__file__).resolve().parent / "assets" / "main_game"
+TITLE_ASSET_DIR = Path(__file__).resolve().parent / "assets" / "new" / "01.title"
+STORY_ASSET_DIR = Path(__file__).resolve().parent / "assets" / "new" / "02.story"
+MAIN_ASSET_DIR = Path(__file__).resolve().parent / "assets" / "new" / "03.main"
+FONT_DIR = Path(__file__).resolve().parent / "assets" / "fonts"
+VERSION_FILE = Path(__file__).resolve().parent / "VERSION"
 
 STORY_INTERVAL_MS = 3000
 STORY_EXTRA_HOLD_MS = 1500
+STORY_TYPING_CHARS_PER_SEC = 32
 MENU_FONT_NAME = "pretendard"
 FONT_CANDIDATES = [
     "Pretendard",
@@ -44,8 +46,33 @@ FONT_CANDIDATES = [
     "Noto Sans CJK KR",
     "Arial Unicode MS",
 ]
+PREFERRED_FONT_FILES = (
+    # 프로젝트에 포함된 폰트를 최우선으로 사용합니다.
+    # 현재 적용: Neo둥근모(NeoDGM)
+    "neodgm.ttf",
+    # 갈무리(Galmuri) 폰트를 쓰고 싶으면 아래 파일 중 하나(또는 여러 개)를 assets/fonts/에 넣어주세요.
+    # (파일명은 자유롭게 바꿀 수 있지만, 그 경우 이 리스트에도 추가해야 합니다.)
+    "Galmuri11.ttf",
+    "Galmuri11-Bold.ttf",
+    "Galmuri14.ttf",
+    "Galmuri14-Bold.ttf",
+    "Galmuri.ttf",
+)
 
 GameStartFn = Callable[[], None]
+
+DEFAULT_APP_VERSION = "0.0.0-dev"
+
+
+def _read_app_version() -> str:
+    """프로젝트 루트의 VERSION 파일에서 배포 버전을 읽는다."""
+    try:
+        text = VERSION_FILE.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        return DEFAULT_APP_VERSION
+    if not text:
+        return DEFAULT_APP_VERSION
+    return text
 
 
 @dataclass
@@ -68,6 +95,25 @@ class CharacterOption:
 
 def _get_font(size: int, bold: bool = False) -> pygame.font.Font:
     """환경에 설치된 한글 지원 폰트를 찾아 반환한다."""
+    # 1) 프로젝트에 포함된 폰트 파일(갈무리 등)을 최우선 사용
+    preferred_paths: list[Path] = []
+    for filename in PREFERRED_FONT_FILES:
+        path = FONT_DIR / filename
+        if path.exists():
+            preferred_paths.append(path)
+    if preferred_paths:
+        if bold:
+            bold_path = next((p for p in preferred_paths if "Bold" in p.stem), None)
+            if bold_path is not None:
+                return pygame.font.Font(bold_path.as_posix(), size)
+        return pygame.font.Font(preferred_paths[0].as_posix(), size)
+
+    # 2) 시스템에 설치된 폰트(갈무리 포함 가능) 시도
+    galmuri_system = pygame.font.match_font("Galmuri", bold=bold)
+    if galmuri_system:
+        return pygame.font.Font(galmuri_system, size)
+
+    # 3) 기존 폰트 후보 폴백
     for name in FONT_CANDIDATES:
         font_path = pygame.font.match_font(name, bold=bold)
         if font_path:
@@ -75,9 +121,9 @@ def _get_font(size: int, bold: bool = False) -> pygame.font.Font:
     return pygame.font.SysFont(None, size, bold=bold)
 
 
-def _load_image(name: str) -> pygame.Surface:
+def _load_image(name: str, base_dir: Path = ASSET_DIR) -> pygame.Surface:
     """지정된 자산 이미지를 RGBA 형태로 불러온다."""
-    path = ASSET_DIR / name
+    path = base_dir / name
     if not path.exists():
         raise FileNotFoundError(f"Missing asset: {path}")
     return pygame.image.load(path.as_posix()).convert_alpha()
@@ -85,21 +131,25 @@ def _load_image(name: str) -> pygame.Surface:
 
 def get_game_entries() -> List[GameEntry]:
     """런처에서 노출할 미니게임 목록을 반환한다."""
+    # 아이콘 매핑(요청 사항)
+    # - assets/new/03.main/game1_icon_buffet_140_140.png => Flappy Bird
+    # - assets/new/03.main/game2_icon_140_140.png        => Sugar Game
+    # - assets/new/03.main/game3_icon_140_140.png        => Snake Survival
     return [
         GameEntry(
-            "Flappy Bird",
-            "탭으로 날아올라 파이프 사이를 통과하세요. 부딪히면 게임오버!",
+            "날아부리",
+            "장애물을 이리저리 피해 날아, 꽁짜 햄버거를 먹으러가자!",
             lambda: run_flappy_bird(quit_on_exit=False),
         ),
         GameEntry(
-            "Snake Survival",
-            "친구를 구해 내 등 뒤에 붙이세요! (동작은 뱀 게임과 같아요)",
-            lambda: run_snake(quit_on_exit=False),
+            "쌓아부리",
+            "내가 쌓은 만큼 꽁짜로 햄버거를 먹을 수 있다고?!\n최대한 높게 쌓아보자!",
+            lambda: run_sugar_game(quit_on_exit=False),
         ),
         GameEntry(
-            "Sugar Game",
-            "햄버거 재료를 쌓아 높이 올리세요. 중심을 잃으면 게임오버!",
-            lambda: run_sugar_game(quit_on_exit=False),
+            "돌려부리",
+            "맵을 돌아다니며,\n꽁짜햄버거에 눈이 먼 친구들을 구출하자!",
+            lambda: run_snake(quit_on_exit=False),
         ),
     ]
 
@@ -115,14 +165,26 @@ class BuriBuriPartyApp:
         self.best_scores: dict[str, Optional[int]] = {game.title: None for game in self.games}
         self.hovered_card_idx: Optional[int] = None
 
-        self.menu_items = ["새로 플레이", "이어서 플레이", "옵션", "나가기"]
+        self.menu_items = ["게임 시작하기", "설정", "종료"]
         self.menu_index = 0
         self.state = "title"
         self.running = True
+        self.has_started = False
+        # 스토리(텍스트) 상태
         self.story_start_ms: Optional[int] = None
-        self.story_card_count = 4
-        self.story_total_ms = self.story_card_count * STORY_INTERVAL_MS + STORY_EXTRA_HOLD_MS
-        self.story_skip_rect = pygame.Rect(SCREEN_WIDTH - 140, 20, 120, 44)
+        self.story_scene_index = 0
+        self.story_char_index = 0
+        self.story_char_accum = 0.0
+        self.story_scenes = [
+            "서기 2521년..\n"
+            "은하수 저 멀리 있는 더 부리부리 행성의 왕, 왕부리부리 29세는 고민에 빠졌다..\n"
+            "더 부리부리 행성의 식문화 발전이 심하게 더딘 것이다..\n\n"
+            "신하부리부리: 전하!! 이제 물에 소금을 타먹는 것도 지겹사옵니다!!!!!!!!!~~~",
+            "왕부리부리: 시끄럽다!!!! (왕도 배고파서 예민함)\n"
+            "지구라는 행성이 식문화가 발전했다는데.. 너네가 가서 조사좀 해오거라",
+            "그렇게 우주선을 타고 지구로 떠난 부정원들...\n"
+            "대한민국에서 지구의 식문화를 조사하기 시작한다..!!!",
+        ]
 
         self.character_options = [
             CharacterOption("A", "Pang", (255, 163, 163)),
@@ -141,9 +203,10 @@ class BuriBuriPartyApp:
         self.status_message: Optional[str] = None
         self.status_until_ms = 0
 
-        self.countdown_game_index: Optional[int] = None
-        self.countdown_start_ms: Optional[int] = None
         self.assets: dict[str, pygame.Surface] = {}
+        self._button_cache: dict[tuple[int, int, bool], pygame.Surface] = {}
+        self._title_menu_button_rects: list[pygame.Rect] = []
+        self.app_version = _read_app_version()
 
         self._init_pygame()
 
@@ -155,6 +218,8 @@ class BuriBuriPartyApp:
         self.clock = pygame.time.Clock()
         self.font_large = _get_font(58, bold=True)
         self.font_medium = _get_font(32, bold=True)
+        # 타이틀 메뉴 버튼 텍스트는 조금 더 작게
+        self.font_menu = _get_font(28, bold=True)
         self.font_small = _get_font(22)
         self.font_micro = _get_font(18)
         self.assets = self._load_assets()
@@ -175,10 +240,47 @@ class BuriBuriPartyApp:
             "exp_bar_frame": "exp_bar_frame.png",
             "game_card_idle": "game_card_idle.png",
             "game_card_hover": "game_card_hover.png",
-            "countdown_background": "countdown_background.png",
             "options_background": "options_background.png",
         }
-        return {key: _load_image(filename) for key, filename in files.items()}
+        assets = {key: _load_image(filename) for key, filename in files.items()}
+        # Title(메인) 화면 스킨
+        assets["title_background"] = _load_image("title_background_800_540.png", base_dir=TITLE_ASSET_DIR)
+        # 로고는 작은 버전이 타이틀 상단 배치에 적합해서 기본으로 사용한다.
+        assets["title_logo"] = _load_image("logo_160_108.png", base_dir=TITLE_ASSET_DIR)
+        # 버튼 UI 스킨(모든 버튼 요소 공통)
+        assets["ui_button"] = _load_image("button.png", base_dir=STORY_ASSET_DIR)
+        # 게임 선택(메인) 아이콘/디폴트 캐릭터
+        assets["char_default"] = _load_image("char_default_140_140.png", base_dir=MAIN_ASSET_DIR)
+        assets["icon_flappy"] = _load_image("game2_icon_140_140.png", base_dir=MAIN_ASSET_DIR)
+        assets["icon_sugar"] = _load_image("game1_icon_buffet_140_140.png", base_dir=MAIN_ASSET_DIR)
+        assets["icon_snake"] = _load_image("game3_icon_140_140.png", base_dir=MAIN_ASSET_DIR)
+        return assets
+
+    def _get_ui_button(self, size: Tuple[int, int], hovered: bool) -> pygame.Surface:
+        """공통 버튼 이미지를 사이즈/호버 상태에 맞게 캐싱해 반환한다."""
+        w, h = size
+        key = (w, h, hovered)
+        cached = self._button_cache.get(key)
+        if cached:
+            return cached
+
+        base = self.assets.get("ui_button")
+        if not base:
+            # 안전장치: 버튼 이미지가 없으면 기존 스킨으로 폴백
+            fallback = self.assets["menu_hover"] if hovered else self.assets["menu_idle"]
+            self._button_cache[key] = fallback
+            return fallback
+
+        # 호버 시 과도하게 커지면 레이아웃이 밀리므로 확대는 최소화한다.
+        scale = 1.02 if hovered else 1.0
+        target_w = max(1, int(w * scale))
+        target_h = max(1, int(h * scale))
+        surface = pygame.transform.smoothscale(base, (target_w, target_h))
+        if hovered:
+            surface = surface.copy()
+            surface.set_alpha(245)
+        self._button_cache[key] = surface
+        return surface
 
     def run(self) -> None:
         """메인 루프를 돌면서 상태 머신을 갱신한다."""
@@ -211,61 +313,101 @@ class BuriBuriPartyApp:
             self._handle_hub_event(event)
         elif self.state == "options":
             self._handle_options_event(event)
-        elif self.state == "countdown":
-            self._handle_countdown_event(event)
 
     def _handle_title_event(self, event: pygame.event.Event) -> None:
         """타이틀 메뉴에서의 키 입력을 처리한다."""
-        if event.type != pygame.KEYDOWN:
+        if event.type == pygame.KEYDOWN:
+            if event.key in (pygame.K_DOWN, pygame.K_s):
+                self.menu_index = (self.menu_index + 1) % len(self.menu_items)
+            elif event.key in (pygame.K_UP, pygame.K_w):
+                self.menu_index = (self.menu_index - 1) % len(self.menu_items)
+            elif event.key in (pygame.K_RETURN, pygame.K_SPACE):
+                self._trigger_menu_action()
+            elif event.key == pygame.K_ESCAPE:
+                self.running = False
             return
 
-        if event.key in (pygame.K_DOWN, pygame.K_s):
-            self.menu_index = (self.menu_index + 1) % len(self.menu_items)
-        elif event.key in (pygame.K_UP, pygame.K_w):
-            self.menu_index = (self.menu_index - 1) % len(self.menu_items)
-        elif event.key in (pygame.K_RETURN, pygame.K_SPACE):
-            self._trigger_menu_action()
-        elif event.key == pygame.K_ESCAPE:
-            self.running = False
+        # 마우스로도 메뉴 선택/실행 가능하도록 처리
+        if event.type == pygame.MOUSEMOTION:
+            hovered = self._hit_test_title_menu(event.pos)
+            if hovered is not None:
+                self.menu_index = hovered
+        elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            hovered = self._hit_test_title_menu(event.pos)
+            if hovered is not None:
+                self.menu_index = hovered
+                self._trigger_menu_action()
+
+    def _hit_test_title_menu(self, pos: Tuple[int, int]) -> Optional[int]:
+        """타이틀 메뉴 버튼 영역에서 마우스 위치에 해당하는 인덱스를 반환한다."""
+        for idx, rect in enumerate(self._title_menu_button_rects):
+            if rect.collidepoint(pos):
+                return idx
+        return None
 
     def _trigger_menu_action(self) -> None:
         """선택된 메뉴 항목에 맞는 액션을 수행한다."""
         current_item = self.menu_items[self.menu_index]
-        if current_item == "새로 플레이":
-            self._start_new_play()
-        elif current_item == "이어서 플레이":
-            self._continue_play()
-        elif current_item == "옵션":
+        if current_item == "게임 시작하기":
+            self._start_game()
+        elif current_item == "설정":
             self.state = "options"
-        elif current_item == "나가기":
+        elif current_item == "종료":
             self.running = False
+
+    def _start_game(self) -> None:
+        """'게임 시작하기' 선택 시: 저장된 캐릭터가 있으면 허브로, 없으면 스토리부터 시작한다."""
+        if self.has_started:
+            self.state = "hub"
+        else:
+            self._start_new_play()
 
     def _start_new_play(self) -> None:
         """새로 플레이 흐름을 시작한다."""
         self.story_start_ms = pygame.time.get_ticks()
+        self.story_scene_index = 0
+        self.story_char_index = 0
+        self.story_char_accum = 0.0
         self.current_character = None
         self.selected_character_idx = 0
         self.state = "story"
 
     def _continue_play(self) -> None:
         """이어하기 선택 시 적절한 단계로 이동한다."""
-        if self.current_character:
-            self.state = "hub"
-        else:
-            self._show_status("먼저 캐릭터를 선택해주세요!")
-            self.state = "characters"
+        # 캐릭터 선택 화면 제거 이후에는 허브로 바로 이동한다.
+        self.state = "hub"
 
     def _handle_story_event(self, event: pygame.event.Event) -> None:
-        """스토리 화면에서 스킵 클릭을 감지한다."""
+        """스토리(텍스트) 화면 입력을 처리한다.
+
+        - 클릭/Enter 1회: 타이핑 중이면 즉시 전체 표시
+        - 클릭/Enter 2회: 다음 씬으로 이동 (마지막 씬이면 캐릭터 선택으로 이동)
+        """
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-            if self.story_skip_rect.collidepoint(event.pos):
-                self._go_to_character_select()
+            self._advance_story_on_confirm()
         elif event.type == pygame.KEYDOWN and event.key in (pygame.K_RETURN, pygame.K_SPACE):
-            self._go_to_character_select()
+            self._advance_story_on_confirm()
+
+    def _advance_story_on_confirm(self) -> None:
+        """스토리에서 확인 입력(클릭/Enter) 시의 동작을 처리한다."""
+        scene = self.story_scenes[self.story_scene_index]
+        if self.story_char_index < len(scene):
+            self.story_char_index = len(scene)
+            return
+        # 이미 전체가 보인 상태면 다음 씬
+        if self.story_scene_index < len(self.story_scenes) - 1:
+            self.story_scene_index += 1
+            self.story_char_index = 0
+            self.story_char_accum = 0.0
+            return
+        self.has_started = True
+        self.state = "hub"
 
     def _go_to_character_select(self) -> None:
         """스토리 종료 후 캐릭터 선택으로 전환한다."""
-        self.state = "characters"
+        # 캐릭터 선택 화면은 더 이상 사용하지 않음(디폴트 캐릭터 고정)
+        self.has_started = True
+        self.state = "hub"
         self.story_start_ms = None
 
     def _handle_character_event(self, event: pygame.event.Event) -> None:
@@ -294,41 +436,47 @@ class BuriBuriPartyApp:
 
     def _handle_hub_event(self, event: pygame.event.Event) -> None:
         """메인 허브 화면에서의 입력을 처리한다."""
+        total = min(len(self.games), 3)
         if event.type == pygame.KEYDOWN:
             if event.key == pygame.K_ESCAPE:
                 self.state = "title"
             elif event.key in (pygame.K_LEFT, pygame.K_a):
-                self._change_page(-1)
+                current = self.hovered_card_idx if self.hovered_card_idx is not None else 0
+                self.hovered_card_idx = (current - 1) % max(total, 1)
             elif event.key in (pygame.K_RIGHT, pygame.K_d):
-                self._change_page(1)
+                current = self.hovered_card_idx if self.hovered_card_idx is not None else 0
+                self.hovered_card_idx = (current + 1) % max(total, 1)
+            elif event.key in (pygame.K_RETURN, pygame.K_SPACE):
+                idx = self.hovered_card_idx if self.hovered_card_idx is not None else 0
+                self._launch_game(idx)
         elif event.type == pygame.MOUSEMOTION:
-            self._update_hovered_card(event.pos)
+            idx = self._get_game_icon_at(event.pos)
+            if idx is not None:
+                self.hovered_card_idx = idx
         elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-            card_index = self._get_card_at(event.pos)
-            if card_index is not None:
-                self._start_countdown(card_index)
+            idx = self._get_game_icon_at(event.pos)
+            if idx is not None:
+                self.hovered_card_idx = idx
+                self._launch_game(idx)
+
+    def _get_game_icon_at(self, pos: Tuple[int, int]) -> Optional[int]:
+        """게임 선택 화면에서 클릭/호버한 아이콘 인덱스를 반환한다(0..2)."""
+        total = min(len(self.games), 3)
+        y = 230
+        size = 140
+        gap = 90
+        total_w = total * size + max(0, total - 1) * gap
+        start_x = (SCREEN_WIDTH - total_w) // 2
+        rects = [pygame.Rect(start_x + i * (size + gap), y, size, size) for i in range(total)]
+        for i, rect in enumerate(rects):
+            if rect.collidepoint(pos):
+                return i
+        return None
 
     def _handle_options_event(self, event: pygame.event.Event) -> None:
         """옵션 화면에서 ESC/Enter 입력으로 타이틀로 복귀한다."""
         if event.type == pygame.KEYDOWN and event.key in (pygame.K_ESCAPE, pygame.K_RETURN):
             self.state = "title"
-
-    def _handle_countdown_event(self, event: pygame.event.Event) -> None:
-        """카운트다운 도중 입력을 처리한다."""
-        if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
-            self._cancel_countdown()
-
-    def _start_countdown(self, game_index: int) -> None:
-        """선택된 게임을 실행하기 전 카운트다운을 시작한다."""
-        self.countdown_game_index = game_index
-        self.countdown_start_ms = pygame.time.get_ticks()
-        self.state = "countdown"
-
-    def _cancel_countdown(self) -> None:
-        """카운트다운을 취소하고 허브로 돌아간다."""
-        self.countdown_game_index = None
-        self.countdown_start_ms = None
-        self.state = "hub"
 
     def _change_page(self, delta: int) -> None:
         """게임 카드 페이지를 변경한다."""
@@ -338,8 +486,6 @@ class BuriBuriPartyApp:
     def _launch_game(self, game_index: int) -> None:
         """선택된 미니게임을 실행한다."""
         game_entry = self.games[game_index]
-        self.countdown_game_index = None
-        self.countdown_start_ms = None
         # pygame.display.quit() 제거 - display 공유 방식으로 변경
         game_entry.start_fn()
         # 미니게임이 display 모드/서피스를 바꿀 수 있으니, 복귀 후 현재 서피스로 동기화한다.
@@ -361,20 +507,18 @@ class BuriBuriPartyApp:
 
     def _update(self, delta_ms: int) -> None:
         """매 프레임 상태를 갱신한다."""
-        _ = delta_ms
         now = pygame.time.get_ticks()
-        if self.state == "story" and self.story_start_ms is not None:
-            if now - self.story_start_ms >= self.story_total_ms:
-                self._go_to_character_select()
+        if self.state == "story":
+            # 타이핑 효과 업데이트
+            scene = self.story_scenes[self.story_scene_index]
+            if self.story_char_index < len(scene):
+                self.story_char_accum += (delta_ms / 1000.0) * STORY_TYPING_CHARS_PER_SEC
+                add = int(self.story_char_accum)
+                if add > 0:
+                    self.story_char_accum -= add
+                    self.story_char_index = min(len(scene), self.story_char_index + add)
         if self.status_message and now > self.status_until_ms:
             self.status_message = None
-        if (
-            self.state == "countdown"
-            and self.countdown_start_ms is not None
-            and self.countdown_game_index is not None
-            and now - self.countdown_start_ms >= COUNTDOWN_DURATION_MS
-        ):
-            self._launch_game(self.countdown_game_index)
 
     def _draw(self) -> None:
         """현재 상태에 맞춰 화면을 렌더링한다."""
@@ -388,37 +532,70 @@ class BuriBuriPartyApp:
             self._draw_hub_screen()
         elif self.state == "options":
             self._draw_options_screen()
-        elif self.state == "countdown":
-            self._draw_countdown_screen()
 
     def _draw_title_screen(self) -> None:
         """타이틀 화면을 렌더링한다."""
-        self.screen.fill(MAIN_BG)
-        title_bar = self.assets.get("title_bar")
-        if title_bar:
-            self.screen.blit(title_bar, (0, 0))
+        title_bg = self.assets.get("title_background")
+        if title_bg:
+            if title_bg.get_size() != (SCREEN_WIDTH, SCREEN_HEIGHT):
+                bg = pygame.transform.smoothscale(title_bg, (SCREEN_WIDTH, SCREEN_HEIGHT))
+            else:
+                bg = title_bg
+            self.screen.blit(bg, (0, 0))
         else:
-            pygame.draw.rect(self.screen, TITLE_BG, (0, 0, SCREEN_WIDTH, TITLE_BAR_HEIGHT))
-        title_surface = self.font_large.render("더 부리부리 파티", True, TITLE_TEXT)
-        self.screen.blit(title_surface, title_surface.get_rect(center=(SCREEN_WIDTH // 2, TITLE_BAR_HEIGHT // 2)))
+            self.screen.fill(MAIN_BG)
+
+        # 상단 로고
+        logo = self.assets.get("title_logo")
+        logo_bottom_y = 80
+        if logo:
+            # 로고가 너무 크면 메뉴 영역이 아래로 밀리므로 조금 작게 잡는다.
+            desired_w = int(SCREEN_WIDTH * 0.36)
+            desired_w = max(180, min(desired_w, SCREEN_WIDTH - 80))
+            scale = desired_w / max(1, logo.get_width())
+            desired_h = int(logo.get_height() * scale)
+            desired_h = max(1, desired_h)
+            logo_surface = pygame.transform.smoothscale(logo, (desired_w, desired_h))
+            logo_rect = logo_surface.get_rect()
+            logo_rect.centerx = SCREEN_WIDTH // 2
+            logo_rect.y = 36
+            self.screen.blit(logo_surface, logo_rect)
+            logo_bottom_y = logo_rect.bottom
 
         subtitle = self.font_small.render("방향키로 이동 후 Enter로 선택하세요", True, INACTIVE_TEXT)
-        self.screen.blit(subtitle, subtitle.get_rect(center=(SCREEN_WIDTH // 2, TITLE_BAR_HEIGHT + 40)))
+        subtitle_rect = subtitle.get_rect(center=(SCREEN_WIDTH // 2, logo_bottom_y + 34))
+        self.screen.blit(subtitle, subtitle_rect)
 
-        menu_start_y = TITLE_BAR_HEIGHT + 120
+        # 메뉴 레이아웃: 가용 높이 안에서 항상 화면 내로 들어오도록 자동 배치한다.
+        base_w, base_h = self.assets["menu_idle"].get_size()
+        # 버튼은 조금 더 크게(단, 화면 밖으로 안 나가도록 아래 가용 높이 계산 로직 유지)
+        button_w = int(base_w * 0.98)
+        button_h = int(base_h * 0.88)
+        button_size = (max(1, button_w), max(1, button_h))
+        gap = 18
+        menu_total_h = len(self.menu_items) * button_size[1] + max(0, len(self.menu_items) - 1) * gap
+        available_top = subtitle_rect.bottom + 22
+        available_bottom = SCREEN_HEIGHT - 70  # footer 영역 확보
+        menu_start_y = max(available_top, int((available_top + available_bottom - menu_total_h) / 2))
+        menu_start_y = min(menu_start_y, max(available_top, available_bottom - menu_total_h))
+
+        self._title_menu_button_rects = []
         for idx, item in enumerate(self.menu_items):
             is_selected = idx == self.menu_index
-            button_surface = self.assets["menu_hover"] if is_selected else self.assets["menu_idle"]
+            button_surface = self._get_ui_button(button_size, hovered=is_selected)
             button_rect = button_surface.get_rect()
             button_rect.centerx = SCREEN_WIDTH // 2
-            button_rect.y = menu_start_y + idx * 70
+            button_rect.y = menu_start_y + idx * (button_size[1] + gap)
             self.screen.blit(button_surface, button_rect)
+            self._title_menu_button_rects.append(button_rect)
 
-            text_color = TITLE_TEXT if is_selected else ACCENT
-            label = self.font_medium.render(item, True, text_color)
+            # 기본은 회색, 선택/호버(키보드 이동 또는 마우스 hover로 menu_index가 잡힌 상태)일 때만 검정
+            text_color = ACCENT if is_selected else INACTIVE_TEXT
+            label = self.font_menu.render(item, True, text_color)
             self.screen.blit(label, label.get_rect(center=button_rect.center))
 
         footer = self.font_micro.render("Team. The buriburi  |  %배포 버전%", True, INACTIVE_TEXT)
+        footer = self.font_micro.render(f"Team. The buriburi  |  v{self.app_version}", True, INACTIVE_TEXT)
         self.screen.blit(footer, (40, SCREEN_HEIGHT - 50))
 
         if self.status_message:
@@ -428,29 +605,50 @@ class BuriBuriPartyApp:
     def _draw_story_screen(self) -> None:
         """컷신 화면을 렌더링한다."""
         self.screen.fill(STORY_BG)
-        intro_text = self.font_medium.render("Story...", True, TITLE_TEXT)
-        self.screen.blit(intro_text, (40, 30))
+        header = self.font_medium.render("STORY", True, TITLE_TEXT)
+        self.screen.blit(header, (40, 30))
 
-        card_template = self.assets["story_card"]
-        for idx, rect in enumerate(self._story_cells()):
-            alpha = self._story_cell_alpha(idx)
-            if alpha <= 0:
+        scene = self.story_scenes[self.story_scene_index]
+        visible_text = scene[: self.story_char_index]
+
+        # 본문 텍스트(자동 줄바꿈)
+        max_width = SCREEN_WIDTH - 80
+        lines = self._wrap_text(visible_text, self.font_small, max_width=max_width)
+        x = 40
+        y = 110
+        line_gap = 10
+        for line in lines:
+            surf = self.font_small.render(line, True, TITLE_TEXT)
+            self.screen.blit(surf, (x, y))
+            y += surf.get_height() + line_gap
+
+        # 하단 안내
+        hint = "클릭/Enter: 전체 보기" if self.story_char_index < len(scene) else "클릭/Enter: 다음"
+        hint_surf = self.font_micro.render(hint, True, INACTIVE_TEXT)
+        self.screen.blit(hint_surf, (40, SCREEN_HEIGHT - 60))
+
+        page = self.font_micro.render(f"{self.story_scene_index + 1} / {len(self.story_scenes)}", True, INACTIVE_TEXT)
+        self.screen.blit(page, (SCREEN_WIDTH - page.get_width() - 40, SCREEN_HEIGHT - 60))
+
+    def _wrap_text(self, text: str, font: pygame.font.Font, max_width: int) -> list[str]:
+        """지정 폭 안에 들어오도록 텍스트를 줄바꿈한다(한글 포함 안전)."""
+        lines: list[str] = []
+        for paragraph in text.split("\n"):
+            if paragraph == "":
+                lines.append("")
                 continue
-            if card_template.get_size() != rect.size:
-                surface = pygame.transform.smoothscale(card_template, rect.size)
-            else:
-                surface = card_template.copy()
-            surface.set_alpha(alpha)
-            self.screen.blit(surface, rect)
-
-            label = self.font_medium.render(f"Cut {idx + 1}", True, ACCENT)
-            self.screen.blit(label, label.get_rect(center=rect.center))
-
-        mouse_pos = pygame.mouse.get_pos()
-        skip_surface = self.assets["skip_hover"] if self.story_skip_rect.collidepoint(mouse_pos) else self.assets["skip_idle"]
-        self.screen.blit(skip_surface, self.story_skip_rect)
-        skip_label = self.font_small.render("Skip >>", True, TITLE_TEXT)
-        self.screen.blit(skip_label, skip_label.get_rect(center=self.story_skip_rect.center))
+            current = ""
+            for ch in paragraph:
+                candidate = current + ch
+                if font.size(candidate)[0] <= max_width:
+                    current = candidate
+                else:
+                    if current:
+                        lines.append(current)
+                    current = ch
+            if current:
+                lines.append(current)
+        return lines
 
     def _story_cells(self) -> Iterable[pygame.Rect]:
         """컷 씬 카드 위치를 생성한다."""
@@ -524,36 +722,87 @@ class BuriBuriPartyApp:
         self.screen.blit(helper, helper.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT - 80)))
 
     def _draw_hub_screen(self) -> None:
-        """게임 메인 허브를 렌더링한다."""
+        """게임 선택 화면(아이콘 기반)을 렌더링한다."""
         self.screen.fill(MAIN_BG)
-        self._draw_top_status_bar()
-        self._draw_character_panel()
-        self._draw_game_cards()
+        self._draw_game_select()
 
-    def _draw_countdown_screen(self) -> None:
-        """미니게임 실행 전 카운트다운 화면을 렌더링한다."""
-        countdown_bg = self.assets.get("countdown_background")
-        if countdown_bg:
-            self.screen.blit(countdown_bg, (0, 0))
-        else:
-            self.screen.fill(COUNTDOWN_BG)
-        if self.countdown_game_index is None or self.countdown_start_ms is None:
-            return
+    def _draw_game_select(self) -> None:
+        """아이콘 기반 게임 선택 UI를 렌더링한다."""
+        title = self.font_medium.render("게임 선택", True, ACCENT)
+        self.screen.blit(title, title.get_rect(center=(SCREEN_WIDTH // 2, 82)))
 
-        game_entry = self.games[self.countdown_game_index]
-        now = pygame.time.get_ticks()
-        elapsed = now - self.countdown_start_ms
-        remaining_ms = max(0, COUNTDOWN_DURATION_MS - elapsed)
-        current_second = max(1, math.ceil(remaining_ms / 1000))
+        helper = self.font_micro.render("마우스로 선택하거나 방향키로 이동 후, Enter로 시작", True, INACTIVE_TEXT)
+        self.screen.blit(helper, helper.get_rect(center=(SCREEN_WIDTH // 2, 112)))
 
-        title = self.font_medium.render(game_entry.title, True, COUNTDOWN_TEXT)
-        self.screen.blit(title, title.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 - 120)))
+        # 디폴트 캐릭터(장식용)
+        char = self.assets.get("char_default")
+        if char:
+            char_s = pygame.transform.smoothscale(char, (84, 84))
+            char_pos = (40, 46)
+            self.screen.blit(char_s, char_pos)
 
-        countdown_text = self.font_large.render(str(current_second), True, COUNTDOWN_TEXT)
-        self.screen.blit(countdown_text, countdown_text.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2)))
+            # 말풍선(캐릭터가 덩그러니 서 있는 느낌 완화)
+            # 말풍선은 너무 길지 않게, 그리고 캐릭터 바로 옆에 붙게 조정
+            bubble_w, bubble_h = 140, 52
+            bubble_x = char_pos[0] + 84 + 6
+            # 살짝 위로 올려서 타이틀과 겹치지 않게
+            bubble_y = char_pos[1] - 2
+            bubble_rect = pygame.Rect(bubble_x, bubble_y, bubble_w, bubble_h)
 
-        helper = self.font_small.render("ESC로 취소", True, COUNTDOWN_TEXT)
-        self.screen.blit(helper, helper.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 120)))
+            # 그림자
+            shadow_rect = bubble_rect.move(3, 3)
+            pygame.draw.rect(self.screen, (0, 0, 0, 40), shadow_rect, border_radius=16)
+
+            # 본체
+            pygame.draw.rect(self.screen, (255, 255, 255), bubble_rect, border_radius=16)
+            pygame.draw.rect(self.screen, (30, 30, 30), bubble_rect, width=2, border_radius=16)
+
+            bubble_text = self.font_small.render("뭐하지?", True, ACCENT)
+            self.screen.blit(bubble_text, bubble_text.get_rect(center=bubble_rect.center))
+
+        icon_keys = ["icon_flappy", "icon_sugar", "icon_snake"]
+        total = min(len(self.games), 3)
+        # 타이틀과 아이콘 컨테이너 사이 간격을 줄이기 위해 위로 당김
+        y = 190
+        size = 140
+        gap = 90
+        total_w = total * size + max(0, total - 1) * gap
+        start_x = (SCREEN_WIDTH - total_w) // 2
+        rects = [pygame.Rect(start_x + i * (size + gap), y, size, size) for i in range(total)]
+
+        selected_idx = self.hovered_card_idx if self.hovered_card_idx is not None else 0
+        selected_idx = max(0, min(total - 1, selected_idx)) if total else 0
+
+        for i, rect in enumerate(rects):
+            is_selected = i == selected_idx
+            icon = self.assets.get(icon_keys[i])
+            if icon:
+                draw_size = int(size * (1.08 if is_selected else 1.0))
+                icon_s = pygame.transform.smoothscale(icon, (draw_size, draw_size))
+                draw_rect = icon_s.get_rect(center=rect.center)
+                self.screen.blit(icon_s, draw_rect)
+                hit_rect = draw_rect
+            else:
+                pygame.draw.rect(self.screen, CARD_BG, rect, border_radius=18)
+                hit_rect = rect
+
+            if is_selected:
+                pygame.draw.rect(self.screen, (30, 30, 30), hit_rect.inflate(12, 12), width=3, border_radius=22)
+
+            # 게임명 + 설명
+            label = self.font_small.render(self.games[i].title, True, ACCENT)
+            label_rect = label.get_rect(center=(rect.centerx, rect.bottom + 28))
+            self.screen.blit(label, label_rect)
+
+            desc_lines = self._wrap_text(self.games[i].description, self.font_micro, max_width=220)
+            y = label_rect.bottom + 10
+            for line in desc_lines[:3]:
+                line_surf = self.font_micro.render(line, True, INACTIVE_TEXT)
+                self.screen.blit(line_surf, line_surf.get_rect(center=(rect.centerx, y + line_surf.get_height() // 2)))
+                y += line_surf.get_height() + 6
+
+        footer = self.font_micro.render(f"ESC: 타이틀로  |  v{self.app_version}", True, INACTIVE_TEXT)
+        self.screen.blit(footer, (40, SCREEN_HEIGHT - 50))
 
     def _draw_options_screen(self) -> None:
         """옵션 화면을 단순하게 렌더링한다."""

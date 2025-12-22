@@ -8,6 +8,7 @@ from typing import Optional
 
 import pygame
 
+from ui_common import draw_game_over_ui
 
 SCREEN_WIDTH = 800
 SCREEN_HEIGHT = 540
@@ -45,6 +46,8 @@ PIPE_SPAWN_INTERVAL_MAX_MS = 1550
 
 BEST_SCORE_FILE = Path(__file__).resolve().parent / ".flappy_best_score"
 NEW_ASSET_DIR = Path(__file__).resolve().parent / "assets" / "new" / "05. game2_naraburi"
+FONT_DIR = Path(__file__).resolve().parent / "assets" / "fonts"
+NEODGM_FONT_FILE = FONT_DIR / "neodgm.ttf"
 
 FONT_CANDIDATES = [
     "Pretendard",
@@ -56,7 +59,18 @@ FONT_CANDIDATES = [
 ]
 
 
+def _draw_card(surface: pygame.Surface, rect: pygame.Rect) -> None:
+    """쌓아부리 스타일과 비슷한 버튼 카드."""
+    pygame.draw.rect(surface, (255, 255, 255), rect, border_radius=18)
+    pygame.draw.rect(surface, (40, 40, 40), rect, width=2, border_radius=18)
+
+
 def get_font(size: int, bold: bool = False) -> pygame.font.Font:
+    if NEODGM_FONT_FILE.exists():
+        try:
+            return pygame.font.Font(NEODGM_FONT_FILE.as_posix(), size)
+        except OSError:
+            pass
     for name in FONT_CANDIDATES:
         font_path = pygame.font.match_font(name, bold=bold)
         if font_path:
@@ -131,8 +145,9 @@ class FlappyBirdGame:
         self.font = get_font(20)
         self.font_small = get_font(16)
 
-        self.state: str = "title"  # title | play | gameover
+        self.state: str = "title"  # title | howto | play | gameover
         self.running = True
+        self.menu_index = 0  # 0=start, 1=howto
 
         self.best_score = load_best_score()
 
@@ -145,6 +160,11 @@ class FlappyBirdGame:
         self._load_assets()
 
         self.reset_run()
+        btn_w, btn_h = 240, 64
+        btn_x = (SCREEN_WIDTH - btn_w) // 2
+        self.btn_start = pygame.Rect(btn_x, 300, btn_w, btn_h)
+        self.btn_howto = pygame.Rect(btn_x, 378, btn_w, btn_h)
+        self.btn_back = pygame.Rect(26, 22, 110, 46)
 
     def _load_assets(self) -> None:
         if not self.use_new_assets:
@@ -314,7 +334,7 @@ class FlappyBirdGame:
 
         for pipe in self.pipes:
             if br.colliderect(pipe.rect_top()) or br.colliderect(pipe.rect_bottom()):
-                self.game_over_reason = "장애물에 부딪혔어요!"
+                self.game_over_reason = "뱀한테 먹혔어요!"
                 self.state = "gameover"
                 return
 
@@ -469,13 +489,45 @@ class FlappyBirdGame:
         self.draw_ground()
         title = self.font_title.render("날아부리", True, (20, 20, 20))
         self.screen.blit(title, title.get_rect(center=(SCREEN_WIDTH // 2, 220)))
-        self.screen.blit(
-            self.font.render("스페이스/아무 키/클릭/터치로 시작", True, (40, 40, 40)),
-            (240, 280),
-        )
+        subtitle = self.font.render("장애물을 피하며 꽁짜 햄버거를 먹으러 가자!", True, (60, 60, 60))
+        self.screen.blit(subtitle, subtitle.get_rect(center=(SCREEN_WIDTH // 2, 262)))
+
+        for idx, (rect, label) in enumerate([(self.btn_start, "게임시작"), (self.btn_howto, "게임방법")]):
+            _draw_card(self.screen, rect)
+            text_color = (20, 20, 20) if idx == self.menu_index else (90, 90, 90)
+            rendered = self.font.render(label, True, text_color)
+            self.screen.blit(rendered, rendered.get_rect(center=rect.center))
         self.screen.blit(self.font_small.render("ESC: 종료", True, (70, 70, 70)), (14, 34))
         # 미리보기 새
         self.draw_bird()
+
+    def draw_howto(self) -> None:
+        self.draw_background()
+        self.draw_ground()
+        title = self.font_title.render("게임방법", True, (20, 20, 20))
+        self.screen.blit(title, title.get_rect(center=(SCREEN_WIDTH // 2, 150)))
+
+        card = pygame.Rect((SCREEN_WIDTH - 520) // 2, 190, 520, 240)
+        _draw_card(self.screen, card)
+
+        lines = [
+            "스페이스/클릭/아무 키로 날개짓!",
+            "장애물에 부딪히면 게임오버예요.",
+            "",
+            "ENTER/클릭: 뒤로",
+        ]
+        y = card.top + 40
+        for line in lines:
+            if line == "":
+                y += 12
+                continue
+            surf = self.font.render(line, True, (50, 50, 50))
+            self.screen.blit(surf, surf.get_rect(center=(card.centerx, y)))
+            y += 34
+
+        _draw_card(self.screen, self.btn_back)
+        back = self.font.render("뒤로", True, (20, 20, 20))
+        self.screen.blit(back, back.get_rect(center=self.btn_back.center))
 
     def draw_play(self) -> None:
         self.draw_background()
@@ -486,26 +538,15 @@ class FlappyBirdGame:
 
     def draw_gameover(self) -> None:
         self.draw_play()
-        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
-        overlay.fill((0, 0, 0, 120))
-        self.screen.blit(overlay, (0, 0))
-
-        card = pygame.Rect(46, 190, SCREEN_WIDTH - 92, 250)
-        pygame.draw.rect(self.screen, (255, 255, 255), card, border_radius=18)
-        pygame.draw.rect(self.screen, (40, 40, 40), card, width=2, border_radius=18)
-
-        self.screen.blit(self.font_title.render("게임오버", True, TEXT_COLOR), (card.x + 120, card.y + 34))
-        reason = self.game_over_reason or "부딪혔어요!"
-        self.screen.blit(self.font.render(reason, True, (60, 60, 60)), (card.x + 92, card.y + 96))
-
-        self.screen.blit(self.font_big.render(str(self.score), True, (30, 30, 30)), (card.x + 185, card.y + 138))
-        self.screen.blit(
-            self.font_small.render(f"최고 기록: {self.best_score}", True, (70, 70, 70)),
-            (card.x + 150, card.y + 202),
-        )
-        self.screen.blit(
-            self.font_small.render("스페이스/클릭: 재시작   ENTER: 타이틀", True, (70, 70, 70)),
-            (card.x + 36, card.y + 224),
+        draw_game_over_ui(
+            self.screen,
+            font_title=self.font_title,
+            font=self.font,
+            font_small=self.font_small,
+            reason=self.game_over_reason or "부딪혔어요!",
+            score=self.score,
+            best_score=self.best_score,
+            hint="스페이스/클릭: 재시작   ENTER: 타이틀",
         )
 
     # -------------------
@@ -524,6 +565,24 @@ class FlappyBirdGame:
                         self.running = False
                         continue
 
+                    if self.state == "howto":
+                        if event.key in (pygame.K_RETURN, pygame.K_SPACE):
+                            self.state = "title"
+                        continue
+
+                    if self.state == "title":
+                        if event.key in (pygame.K_DOWN, pygame.K_s):
+                            self.menu_index = (self.menu_index + 1) % 2
+                        elif event.key in (pygame.K_UP, pygame.K_w):
+                            self.menu_index = (self.menu_index - 1) % 2
+                        elif event.key in (pygame.K_RETURN, pygame.K_SPACE):
+                            if self.menu_index == 0:
+                                self.state = "play"
+                                self.reset_run()
+                            else:
+                                self.state = "howto"
+                        continue
+
                     if self.state == "gameover" and event.key == pygame.K_RETURN:
                         self.state = "title"
                         continue
@@ -531,7 +590,22 @@ class FlappyBirdGame:
                     # 플래피는 “아무 키/스페이스”가 곧 플랩
                     self.flap()
                 elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                    self.flap()
+                    mx, my = event.pos
+                    if self.state == "title":
+                        if self.btn_start.collidepoint(mx, my):
+                            self.menu_index = 0
+                            self.state = "play"
+                            self.reset_run()
+                        elif self.btn_howto.collidepoint(mx, my):
+                            self.menu_index = 1
+                            self.state = "howto"
+                    elif self.state == "howto":
+                        if self.btn_back.collidepoint(mx, my):
+                            self.state = "title"
+                        else:
+                            self.state = "title"
+                    else:
+                        self.flap()
 
             if self.state == "play":
                 self.update_play(dt)
@@ -543,6 +617,8 @@ class FlappyBirdGame:
 
             if self.state == "title":
                 self.draw_title()
+            elif self.state == "howto":
+                self.draw_howto()
             elif self.state == "play":
                 self.draw_play()
             elif self.state == "gameover":

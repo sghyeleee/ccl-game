@@ -8,6 +8,7 @@ from typing import Deque, Dict, List, Tuple
 
 import pygame
 
+from ui_common import draw_game_over_ui
 
 CELL_SIZE = 20
 GRID_WIDTH = 32
@@ -26,6 +27,8 @@ SPEED_INCREMENT = 0.15
 ASSET_DIR = Path(__file__).resolve().parent / "assets" / "snake_survival"
 NEW_ASSET_DIR = Path(__file__).resolve().parent / "assets" / "new" / "06.game3_dolyuburi"
 FONT_FILE = ASSET_DIR / "Pretendard-Regular.ttf"
+FONT_DIR = Path(__file__).resolve().parent / "assets" / "fonts"
+NEODGM_FONT_FILE = FONT_DIR / "neodgm.ttf"
 FONT_CANDIDATES = (
     "Pretendard",
     "Pretendard-Regular",
@@ -361,6 +364,11 @@ def next_direction(current: Direction, queued: Deque[Direction]) -> Direction:
 
 def load_game_font(size: int) -> pygame.font.Font:
     """Load Pretendard font if available, otherwise fall back to default."""
+    if NEODGM_FONT_FILE.exists():
+        try:
+            return pygame.font.Font(NEODGM_FONT_FILE.as_posix(), size)
+        except OSError:
+            pass
     if FONT_FILE.exists():
         try:
             return pygame.font.Font(FONT_FILE.as_posix(), size)
@@ -378,22 +386,49 @@ def load_game_font(size: int) -> pygame.font.Font:
 def run_game(*, quit_on_exit: bool = True) -> None:
     """Run the endless snake survival mini-game."""
     pygame.init()
-    pygame.display.set_caption("친구 구출")
+    pygame.display.set_caption("돌려부리")
     screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
     clock = pygame.time.Clock()
+    font_title = load_game_font(46)
     font = load_game_font(22)
+    font_small = load_game_font(18)
     assets = load_assets()
 
-    snake: List[Point] = [(GRID_WIDTH // 2, GRID_HEIGHT // 2)]
+    def draw_card(surface: pygame.Surface, rect: pygame.Rect) -> None:
+        pygame.draw.rect(surface, (255, 255, 255), rect, border_radius=18)
+        pygame.draw.rect(surface, (40, 40, 40), rect, width=2, border_radius=18)
+
+    btn_w, btn_h = 240, 64
+    btn_x = (SCREEN_WIDTH - btn_w) // 2
+    btn_start = pygame.Rect(btn_x, 300, btn_w, btn_h)
+    btn_howto = pygame.Rect(btn_x, 378, btn_w, btn_h)
+    btn_back = pygame.Rect(26, 22, 110, 46)
+    menu_index = 0  # 0=start, 1=howto
+    mode: str = "title"  # title | howto | play
+
+    snake: List[Point] = []
     current_direction: Direction = (1, 0)
     direction_queue: Deque[Direction] = deque()
-    food, food_variant = spawn_food(snake, len(assets.food_frames))
+    food: Point = (0, 0)
+    food_variant = 0
     move_timer = 0.0
     moves_per_second = INITIAL_SPEED
     score = 1
     best_score = 1
     game_over = False
     sparks: List[SparkEffect] = []
+
+    def reset_play() -> None:
+        nonlocal snake, current_direction, food, food_variant, move_timer, moves_per_second, score, game_over
+        snake = [(GRID_WIDTH // 2, GRID_HEIGHT // 2)]
+        current_direction = (1, 0)
+        direction_queue.clear()
+        food, food_variant = spawn_food(snake, len(assets.food_frames))
+        move_timer = 0.0
+        moves_per_second = INITIAL_SPEED
+        score = 1
+        game_over = False
+        sparks.clear()
 
     running = True
     while running:
@@ -407,17 +442,29 @@ def run_game(*, quit_on_exit: bool = True) -> None:
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
                     running = False
+                if mode == "howto":
+                    if event.key in (pygame.K_RETURN, pygame.K_SPACE):
+                        mode = "title"
+                    continue
+                if mode == "title":
+                    if event.key in (pygame.K_DOWN, pygame.K_s):
+                        menu_index = (menu_index + 1) % 2
+                    elif event.key in (pygame.K_UP, pygame.K_w):
+                        menu_index = (menu_index - 1) % 2
+                    elif event.key in (pygame.K_RETURN, pygame.K_SPACE):
+                        if menu_index == 0:
+                            reset_play()
+                            mode = "play"
+                        else:
+                            mode = "howto"
+                    continue
+
+                # play 모드 입력
                 if event.key == pygame.K_r and game_over:
-                    snake = [(GRID_WIDTH // 2, GRID_HEIGHT // 2)]
-                    current_direction = (1, 0)
-                    direction_queue.clear()
-                    food, food_variant = spawn_food(snake, len(assets.food_frames))
-                    move_timer = 0.0
-                    moves_per_second = INITIAL_SPEED
-                    score = 1
-                    game_over = False
-                    sparks.clear()
-                if not game_over:
+                    reset_play()
+                if event.key == pygame.K_RETURN and game_over:
+                    mode = "title"
+                if mode == "play" and not game_over:
                     if event.key in (pygame.K_UP, pygame.K_w):
                         direction_queue.append((0, -1))
                     elif event.key in (pygame.K_DOWN, pygame.K_s):
@@ -426,8 +473,21 @@ def run_game(*, quit_on_exit: bool = True) -> None:
                         direction_queue.append((-1, 0))
                     elif event.key in (pygame.K_RIGHT, pygame.K_d):
                         direction_queue.append((1, 0))
+            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                mx, my = event.pos
+                if mode == "title":
+                    if btn_start.collidepoint(mx, my):
+                        menu_index = 0
+                        reset_play()
+                        mode = "play"
+                    elif btn_howto.collidepoint(mx, my):
+                        menu_index = 1
+                        mode = "howto"
+                elif mode == "howto":
+                    if btn_back.collidepoint(mx, my):
+                        mode = "title"
 
-        if not game_over:
+        if mode == "play" and not game_over:
             move_timer += delta_time
             move_interval = 1 / moves_per_second
             if move_timer >= move_interval:
@@ -459,22 +519,69 @@ def run_game(*, quit_on_exit: bool = True) -> None:
                     else:
                         snake.pop()
 
-        draw_background(screen, assets.background_tile, assets.grid_overlay)
-        draw_snake(
-            screen,
-            snake,
-            assets.head_frames,
-            assets.body_frames,
-            assets.tail_frames,
-            current_direction,
-            assets.shadow,
-        )
-        draw_food(screen, food, assets.food_frames, food_variant, assets.shadow)
-        draw_sparks(screen, assets.spark_frames, sparks)
-        draw_hud(screen, assets.hud_panel, font, score, best_score, moves_per_second)
+        if mode == "title":
+            draw_background(screen, assets.background_tile, assets.grid_overlay)
+            title_surf = font_title.render("돌려부리", True, (20, 20, 20))
+            screen.blit(title_surf, title_surf.get_rect(center=(SCREEN_WIDTH // 2, 180)))
+            subtitle = font.render("맵을 돌아다니며 친구들을 구출하자!", True, (60, 60, 60))
+            screen.blit(subtitle, subtitle.get_rect(center=(SCREEN_WIDTH // 2, 220)))
+            for idx, (rect, label) in enumerate([(btn_start, "게임시작"), (btn_howto, "게임방법")]):
+                draw_card(screen, rect)
+                color = (20, 20, 20) if idx == menu_index else (90, 90, 90)
+                t = font.render(label, True, color)
+                screen.blit(t, t.get_rect(center=rect.center))
+            esc = font_small.render("ESC: 종료", True, (70, 70, 70))
+            screen.blit(esc, (14, SCREEN_HEIGHT - 30))
+        elif mode == "howto":
+            draw_background(screen, assets.background_tile, assets.grid_overlay)
+            title_surf = font_title.render("게임방법", True, (20, 20, 20))
+            screen.blit(title_surf, title_surf.get_rect(center=(SCREEN_WIDTH // 2, 120)))
+            card = pygame.Rect((SCREEN_WIDTH - 520) // 2, 170, 520, 240)
+            draw_card(screen, card)
+            lines = [
+                "방향키로 이동합니다.",
+                "꽁짜 햄버거를 먹으면 친구가 늘어나요!",
+                "벽이나 내 몸에 부딪히면 게임오버!",
+                "",
+                "R: 재시작(게임오버)  ENTER: 타이틀",
+            ]
+            y = card.top + 34
+            for line in lines:
+                if line == "":
+                    y += 12
+                    continue
+                surf = font.render(line, True, (50, 50, 50))
+                screen.blit(surf, surf.get_rect(center=(card.centerx, y)))
+                y += 30
+            draw_card(screen, btn_back)
+            back = font.render("뒤로", True, (20, 20, 20))
+            screen.blit(back, back.get_rect(center=btn_back.center))
+        else:
+            draw_background(screen, assets.background_tile, assets.grid_overlay)
+            draw_snake(
+                screen,
+                snake,
+                assets.head_frames,
+                assets.body_frames,
+                assets.tail_frames,
+                current_direction,
+                assets.shadow,
+            )
+            draw_food(screen, food, assets.food_frames, food_variant, assets.shadow)
+            draw_sparks(screen, assets.spark_frames, sparks)
+            draw_hud(screen, assets.hud_panel, font, score, best_score, moves_per_second)
 
-        if game_over:
-            draw_game_over(screen, font, score, assets.game_over_card)
+            if game_over:
+                draw_game_over_ui(
+                    screen,
+                    font_title=font_title,
+                    font=font,
+                    font_small=font_small,
+                    reason="벽이나 내 몸에 부딪혔어요!",
+                    score=score,
+                    best_score=best_score,
+                    hint="R: 재시작   ENTER: 타이틀",
+                )
 
         pygame.display.flip()
 
