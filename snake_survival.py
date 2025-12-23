@@ -442,7 +442,7 @@ def load_game_font(size: int) -> pygame.font.Font:
 def run_game(*, quit_on_exit: bool = True) -> None:
     """Run the endless snake survival mini-game."""
     pygame.init()
-    pygame.display.set_caption("돌려부리")
+    pygame.display.set_caption("모아부리")
     screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
     clock = pygame.time.Clock()
     font_title = load_game_font(46)
@@ -582,17 +582,19 @@ def run_game(*, quit_on_exit: bool = True) -> None:
 
         if mode == "title":
             draw_background(screen, assets.background_tile, assets.grid_overlay)
-            title_surf = font_title.render("돌려부리", True, (20, 20, 20))
-            screen.blit(title_surf, title_surf.get_rect(center=(SCREEN_WIDTH // 2, 180)))
-            subtitle = font.render("맵을 돌아다니며 친구들을 구출하자!", True, (60, 60, 60))
-            screen.blit(subtitle, subtitle.get_rect(center=(SCREEN_WIDTH // 2, 220)))
+            title_surf = font_title.render("모아부리", True, (20, 20, 20))
+            # 세 게임 공통 타이틀 레이아웃(글씨↔버튼 간격 통일)
+            screen.blit(title_surf, title_surf.get_rect(center=(SCREEN_WIDTH // 2, 150)))
+            subtitle = font.render("친구들을 모아서 구출하자!", True, (60, 60, 60))
+            screen.blit(subtitle, subtitle.get_rect(center=(SCREEN_WIDTH // 2, 195)))
             for idx, (rect, label) in enumerate([(btn_start, "게임시작"), (btn_howto, "게임방법")]):
                 draw_card(screen, rect)
                 color = (20, 20, 20) if idx == menu_index else (90, 90, 90)
                 t = font.render(label, True, color)
                 screen.blit(t, t.get_rect(center=rect.center))
             esc = font_small.render("ESC: 종료", True, (70, 70, 70))
-            screen.blit(esc, (14, SCREEN_HEIGHT - 30))
+            # 다른 게임과 동일하게 하단 중앙에 안내 문구 배치
+            screen.blit(esc, esc.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT - 26)))
         elif mode == "howto":
             draw_background(screen, assets.background_tile, assets.grid_overlay)
             title_surf = font_title.render("게임방법", True, (20, 20, 20))

@@ -136,17 +136,17 @@ def get_game_entries() -> List[GameEntry]:
     return [
         GameEntry(
             "날아부리",
-            "장애물을 이리저리 피해 날아, 꽁짜 햄버거를 먹으러가자!",
+            "뱀을 요리조리 피해서\n날아가버린 샌드위치를\n쫓아가자!!",
             lambda: run_flappy_bird(quit_on_exit=False),
         ),
         GameEntry(
             "쌓아부리",
-            "내가 쌓은 만큼 꽁짜로 햄버거를 먹을 수 있다고?!\n최대한 높게 쌓아보자!",
+            "내가 쌓은 만큼 꽁짜로\n햄버거를 먹을 수 있다고?\n최대한 높게 쌓아보자!",
             lambda: run_sugar_game(quit_on_exit=False),
         ),
         GameEntry(
-            "돌려부리",
-            "맵을 돌아다니며,\n꽁짜햄버거에 눈이 먼 친구들을 구출하자!",
+            "모아부리",
+            "꽁짜 햄버거에 정신 못\n차리는 친구들을 모아서\n구출하자!",
             lambda: run_snake(quit_on_exit=False),
         ),
     ]

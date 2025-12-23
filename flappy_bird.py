@@ -186,18 +186,12 @@ class FlappyBirdGame:
         self.game_over_reason: Optional[str] = None
 
     def flap(self) -> None:
-        if self.state == "title":
-            self.state = "play"
-            self.reset_run()
-            self.bird_vy = JUMP_VELOCITY
+        # 플랩(점프)은 플레이 중일 때만 동작한다.
+        # gameover에서 아무 키/클릭으로 재시작되는 것을 방지하기 위해 여기서 상태 전환을 하지 않는다.
+        if self.state != "play":
             return
-        if self.state == "play":
-            self.bird_vy = JUMP_VELOCITY
-            return
-        if self.state == "gameover":
-            self.state = "play"
-            self.reset_run()
-            self.bird_vy = JUMP_VELOCITY
+        self.bird_vy = JUMP_VELOCITY
+        return
 
     def _compute_spawn_interval_ms(self) -> int:
         # 점수가 오를수록 평균 간격을 약간 줄이되, 랜덤성은 유지
@@ -452,16 +446,19 @@ class FlappyBirdGame:
         self.draw_background()
         self.draw_ground()
         title = self.font_title.render("날아부리", True, (20, 20, 20))
-        self.screen.blit(title, title.get_rect(center=(SCREEN_WIDTH // 2, 220)))
-        subtitle = self.font.render("장애물을 피하며 꽁짜 햄버거를 먹으러 가자!", True, (60, 60, 60))
-        self.screen.blit(subtitle, subtitle.get_rect(center=(SCREEN_WIDTH // 2, 262)))
+        # 다른 게임(쌓아부리/모아부리)과 동일하게: 타이틀/설명은 위쪽에 두고 버튼과 충분한 간격을 확보
+        self.screen.blit(title, title.get_rect(center=(SCREEN_WIDTH // 2, 150)))
+        subtitle = self.font.render("뱀을 요리조리 피해보자!!", True, (60, 60, 60))
+        self.screen.blit(subtitle, subtitle.get_rect(center=(SCREEN_WIDTH // 2, 195)))
 
         for idx, (rect, label) in enumerate([(self.btn_start, "게임시작"), (self.btn_howto, "게임방법")]):
             _draw_card(self.screen, rect)
             text_color = (20, 20, 20) if idx == self.menu_index else (90, 90, 90)
             rendered = self.font.render(label, True, text_color)
             self.screen.blit(rendered, rendered.get_rect(center=rect.center))
-        self.screen.blit(self.font_small.render("ESC: 종료", True, (70, 70, 70)), (14, 34))
+        # 다른 게임과 동일하게 하단 중앙에 안내 문구 배치
+        esc = self.font_small.render("ESC: 종료", True, (70, 70, 70))
+        self.screen.blit(esc, esc.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT - 26)))
         # 미리보기 새
         self.draw_bird()
 
@@ -469,9 +466,10 @@ class FlappyBirdGame:
         self.draw_background()
         self.draw_ground()
         title = self.font_title.render("게임방법", True, (20, 20, 20))
-        self.screen.blit(title, title.get_rect(center=(SCREEN_WIDTH // 2, 150)))
+        # 세 게임 공통 게임방법 레이아웃
+        self.screen.blit(title, title.get_rect(center=(SCREEN_WIDTH // 2, 120)))
 
-        card = pygame.Rect((SCREEN_WIDTH - 520) // 2, 190, 520, 240)
+        card = pygame.Rect((SCREEN_WIDTH - 520) // 2, 170, 520, 240)
         _draw_card(self.screen, card)
 
         lines = [

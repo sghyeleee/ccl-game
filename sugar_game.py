@@ -27,7 +27,12 @@ BASE_HEIGHT = 42
 GRAVITY = 1400.0
 # 화면 내 고정 위치(카메라 적용 전, 스크린 좌표 기준)
 CARRIER_SCREEN_Y = 72
-HELD_CUBE_SCREEN_Y = 122
+# “햄버거를 들고 있는” 연출에 맞게 20px 위로 올려 정렬
+HELD_CUBE_SCREEN_Y = 50
+
+# 요정 오버레이는 “스크린 고정” 위치에 두어, 햄버거(held cube) y를 조절해도 요정이 같이 움직이지 않게 한다.
+# (원래 held y=122일 때 anchor_y=held_top+22=144에 맞춰져 있었음)
+FAIRY_HOLD_ANCHOR_SCREEN_Y = 144
 
 # 스택 최상단이 이 y(스크린)보다 위로 올라가려 하면 카메라가 위로 스크롤된다.
 # (요정/스택이 겹치지 않도록 “화면 절반 정도 거리” 확보 목적)
@@ -38,6 +43,9 @@ CARRIER_ACCEL_BASE = 520.0
 CARRIER_ACCEL_PER_LEVEL = 26.0
 CARRIER_MAX_SPEED_BASE = 220.0
 CARRIER_MAX_SPEED_PER_LEVEL = 10.0
+# 난이도(속도 증가 “주기”) 조절: 레벨이 오를수록 속도가 더 빨리 커지게 만드는 램프 배수
+# 1.0 = 기존과 동일, 1.6 = 같은 층수에서도 더 빠르게 체감 상승
+CARRIER_SPEED_RAMP_MULT = 1.6
 
 # 캐리어(요정) 좌우 이동 폭(왕복 거리). 기존엔 화면 거의 전체를 쓰는데 너무 넓어 보여 축소.
 # 예) 약 580px 느낌 → 300px 정도로 제한
@@ -134,6 +142,11 @@ class SugarStackGame:
         self.bg_surface: Optional[pygame.Surface] = None
         self.dish_surface: Optional[pygame.Surface] = None
         self.food_surfaces: list[pygame.Surface] = []
+        # 요정(햄버거를 “들고 있는” 연출용 오버레이 스프라이트)
+        self.fairy_frames: list[pygame.Surface] = []
+        # 드롭 순간 요정이 “그 자리에 가만히” 있도록, 스크린 기준 x를 고정(freeze)하기 위한 상태
+        self._fairy_frozen: bool = False
+        self._fairy_anchor_center_x: int = SCREEN_WIDTH // 2
         self._load_assets()
 
         # UI 버튼(가로 화면 기준)
@@ -161,12 +174,25 @@ class SugarStackGame:
                 pygame.transform.smoothscale(food1, (CUBE_SIZE, CUBE_SIZE)),
                 pygame.transform.smoothscale(food2, (CUBE_SIZE, CUBE_SIZE)),
             ]
+
+            # 요정(단일 이미지): 햄버거 위에 겹쳐 “들고 있는” 것처럼 보이게 하는 오버레이
+            fairy_path = NEW_ASSET_DIR / "MCDON.png"
+            if fairy_path.exists():
+                img = pygame.image.load(fairy_path.as_posix()).convert_alpha()
+                # 햄버거(CUBE_SIZE=64)보다 조금 크게 보이도록 스케일(“들고 있는” 느낌)
+                target_h = int(CUBE_SIZE * 1.7)
+                fw, fh = img.get_size()
+                if fh > 0:
+                    scale = target_h / float(fh)
+                    target_w = max(1, int(fw * scale))
+                    self.fairy_frames = [pygame.transform.smoothscale(img, (target_w, target_h))]
         except Exception:
             # 에셋이 깨져도 게임은 동작하도록 폴백
             self.use_new_assets = False
             self.bg_surface = None
             self.dish_surface = None
             self.food_surfaces = []
+            self.fairy_frames = []
 
     # -------------------------
     # 게임 리셋/스폰
@@ -211,6 +237,9 @@ class SugarStackGame:
             is_falling=False,
             kind=held_kind,
         )
+        # 요정은 기본적으로 캐리어(=들고 있는 햄버거) 위치를 따라간다.
+        self._fairy_frozen = False
+        self._fairy_anchor_center_x = int(self.carrier_x) + CUBE_SIZE // 2
 
         self.game_over_reason: Optional[str] = None
 
@@ -223,6 +252,9 @@ class SugarStackGame:
             is_falling=False,
             kind=int(kind),
         )
+        # 새 햄버거를 집으면 요정은 다시 캐리어 위치를 따라간다.
+        self._fairy_frozen = False
+        self._fairy_anchor_center_x = int(self.carrier_x) + CUBE_SIZE // 2
 
     def update_camera(self) -> None:
         """스택 최상단이 화면 상단 쪽으로 침범하지 않도록 카메라를 위로 올린다."""
@@ -240,6 +272,9 @@ class SugarStackGame:
             return
         if self.held_cube.is_falling:
             return
+        # 드롭 순간의 요정 위치를 고정해서 “요정은 가만히, 햄버거만 낙하” 연출을 만든다.
+        self._fairy_frozen = True
+        self._fairy_anchor_center_x = int(self.carrier_x) + CUBE_SIZE // 2
         self.held_cube.is_falling = True
         self.held_cube.vel_y = 0.0
 
@@ -325,8 +360,9 @@ class SugarStackGame:
     # -------------------------
     def update_play(self, dt: float) -> None:
         # 캐리어 이동(가속 + 속도 상한)
-        accel = CARRIER_ACCEL_BASE + CARRIER_ACCEL_PER_LEVEL * max(0, self.level - 1)
-        max_speed = CARRIER_MAX_SPEED_BASE + CARRIER_MAX_SPEED_PER_LEVEL * max(0, self.level - 1)
+        level_factor = max(0.0, (self.level - 1) * CARRIER_SPEED_RAMP_MULT)
+        accel = CARRIER_ACCEL_BASE + CARRIER_ACCEL_PER_LEVEL * level_factor
+        max_speed = CARRIER_MAX_SPEED_BASE + CARRIER_MAX_SPEED_PER_LEVEL * level_factor
 
         self.carrier_speed = min(max_speed, self.carrier_speed + accel * dt)
         self.carrier_x += self.carrier_dir * self.carrier_speed * dt
@@ -351,6 +387,9 @@ class SugarStackGame:
             self.held_cube.rect.x = int(self.carrier_x)
             # 카메라가 움직여도 요정/큐브는 화면 상단 근처에 고정되도록 월드 y를 재설정
             self.held_cube.rect.y = int(self.camera_y + HELD_CUBE_SCREEN_Y)
+            # 요정도 기본적으로 캐리어 위치를 따라가되, 드롭으로 고정된 동안엔 유지
+            if not self._fairy_frozen:
+                self._fairy_anchor_center_x = int(self.carrier_x) + CUBE_SIZE // 2
 
         # 낙하 업데이트
         self.held_cube.update(dt)
@@ -417,6 +456,10 @@ class SugarStackGame:
         pygame.draw.rect(self.screen, (255, 255, 255), hl, border_radius=6)
 
     def draw_carrier(self) -> None:
+        # 요정 스프라이트가 있으면, 오버레이로 그려서 “햄버거를 들고 있는” 연출을 만들기 때문에
+        # 여기서는 도형 요정을 그리지 않는다(중복 방지).
+        if self.fairy_frames:
+            return
         # “요정”을 간단한 원/날개로 표현
         x = int(self.carrier_x) + CUBE_SIZE // 2
         # 요정은 스크린 기준 위치에 고정
@@ -453,12 +496,24 @@ class SugarStackGame:
 
         # 낙하 중/대기 중인 큐브
         if self.state == "play":
-            self.draw_cube(self.held_cube.rect.move(0, -int(self.camera_y)), (252, 252, 252), kind=self.held_cube.kind)
+            held_rect = self.held_cube.rect.move(0, -int(self.camera_y))
+            self.draw_cube(held_rect, (252, 252, 252), kind=self.held_cube.kind)
+
+            # “햄버거를 들고 있는 요정” 연출: 햄버거를 먼저 그리고, 그 위에 요정을 겹쳐서(앞에) 렌더링
+            # 낙하 시작 순간에 요정이 잠깐 사라지는 현상을 막기 위해, falling 상태에서도 계속 그린다.
+            if self.fairy_frames:
+                fairy = self.fairy_frames[0]
+                # 손이 햄버거 위쪽에 걸린 것처럼 보이도록 약간 위에서 겹치게 배치
+                # (midbottom 앵커를 햄버거 상단 근처로 둔다)
+                anchor_x = self._fairy_anchor_center_x - 6
+                anchor_y = FAIRY_HOLD_ANCHOR_SCREEN_Y
+                fr = fairy.get_rect(midbottom=(anchor_x, anchor_y))
+                self.screen.blit(fairy, fr)
 
     def draw_title(self) -> None:
         self.draw_background()
         draw_text_center(self.screen, self.font_title, "쌓아부리", 150)
-        draw_text_center(self.screen, self.font, "원버튼 타이밍으로 탑을 쌓아보세요", 195, color=(60, 60, 60))
+        draw_text_center(self.screen, self.font, "햄버거를 최대한 높게 쌓아보자!", 195, color=(60, 60, 60))
 
         for rect, label in [(self.btn_start, "게임시작"), (self.btn_howto, "게임방법")]:
             draw_card(self.screen, rect)
@@ -490,7 +545,8 @@ class SugarStackGame:
             y += 30
 
         draw_card(self.screen, self.btn_back)
-        draw_text_center(self.screen, self.font, "뒤로", self.btn_back.centery)
+        back = self.font.render("뒤로", True, TEXT_COLOR)
+        self.screen.blit(back, back.get_rect(center=self.btn_back.center))
 
     def draw_play(self) -> None:
         self.draw_background()
