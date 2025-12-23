@@ -76,4 +76,31 @@ py -m pip install pygame
 - 처음 한 번: `pip install pygame`
 - 매번 실행: `python main_game.py`
 
+---
+
+## 랭킹(Supabase) 연동
+
+게임 오버 시 닉네임을 입력하고 랭킹을 저장/조회하려면 아래 환경변수를 설정해야 합니다.
+
+- **SUPABASE_URL**: Supabase Project URL  
+  - 예: `https://gzlylnktkrktfbsckvce.supabase.co`
+- **SUPABASE_ANON_KEY**: Supabase Publishable(=anon public) key  
+  - 또는 `SUPABASE_PUBLISHABLE_KEY`로 설정해도 됩니다.
+
+macOS (zsh):
+
+```bash
+export SUPABASE_URL="https://gzlylnktkrktfbsckvce.supabase.co"
+export SUPABASE_ANON_KEY="(여기에 anon key)"
+python3 main_game.py
+```
+
+Windows (PowerShell):
+
+```powershell
+$env:SUPABASE_URL="https://gzlylnktkrktfbsckvce.supabase.co"
+$env:SUPABASE_ANON_KEY="(여기에 anon key)"
+python main_game.py
+```
+
 

@@ -8,6 +8,8 @@ from typing import Optional, Tuple
 import pygame
 
 from ui_common import draw_game_over_ui
+from leaderboard import LeaderboardEntry, submit_and_fetch_async
+from ui_common import draw_input_box, draw_leaderboard_list
 
 # =========================
 # 기본 설정
@@ -39,6 +41,10 @@ CARRIER_ACCEL_PER_LEVEL = 26.0
 CARRIER_MAX_SPEED_BASE = 220.0
 CARRIER_MAX_SPEED_PER_LEVEL = 10.0
 
+# 캐리어(요정) 좌우 이동 폭(왕복 거리). 기존엔 화면 거의 전체를 쓰는데 너무 넓어 보여 축소.
+# 예) 약 580px 느낌 → 300px 정도로 제한
+CARRIER_TRAVEL_WIDTH = 300
+
 # 안정도(세미-물리) 튜닝
 MIN_OVERLAP_RATIO_FOR_SAFE = 0.62  # 이 이상이면 거의 흔들림 없이 안정
 MIN_OVERLAP_RATIO_TO_PLACE = 0.20  # 이 미만이면 사실상 지지 불가 -> 즉시 붕괴
@@ -55,7 +61,6 @@ SNAP_TO_TARGET_PX = 4
 # COM 기반 보조 판정: 무게중심이 베이스 지지면 밖이면 즉시 게임오버
 COM_MARGIN_PX = 6
 
-BEST_SCORE_FILE = Path(__file__).resolve().parent / ".sugar_best_score"
 NEW_ASSET_DIR = Path(__file__).resolve().parent / "assets" / "new" / "04. game1_ssaaburi"
 FONT_DIR = Path(__file__).resolve().parent / "assets" / "fonts"
 NEODGM_FONT_FILE = FONT_DIR / "neodgm.ttf"
@@ -81,23 +86,6 @@ def get_font(size: int, bold: bool = False) -> pygame.font.Font:
         if font_path:
             return pygame.font.Font(font_path, size)
     return pygame.font.SysFont(None, size, bold=bold)
-
-
-def load_best_score() -> int:
-    try:
-        if BEST_SCORE_FILE.exists():
-            return int(BEST_SCORE_FILE.read_text(encoding="utf-8").strip() or "0")
-    except Exception:
-        pass
-    return 0
-
-
-def save_best_score(score: int) -> None:
-    try:
-        BEST_SCORE_FILE.write_text(str(score), encoding="utf-8")
-    except Exception:
-        # 저장 실패는 게임 진행에 치명적이지 않으므로 무시
-        pass
 
 
 def draw_text_center(surface: pygame.Surface, font: pygame.font.Font, text: str, y: int, color=TEXT_COLOR) -> None:
@@ -142,8 +130,10 @@ class SugarStackGame:
 
         self.state: str = "title"  # title | howto | play | gameover
         self.running = True
-
-        self.best_score = load_best_score()
+        self.lb_nickname = ""
+        self.lb_status: Optional[str] = None
+        self.lb_top: list[LeaderboardEntry] = []
+        self.lb_submitted = False
 
         # New theme assets (쌓아부리)
         self.use_new_assets = NEW_ASSET_DIR.exists()
@@ -229,6 +219,10 @@ class SugarStackGame:
         )
 
         self.game_over_reason: Optional[str] = None
+        self.lb_nickname = ""
+        self.lb_status = None
+        self.lb_top = []
+        self.lb_submitted = False
 
     def spawn_held_cube(self) -> None:
         kind = 0
@@ -347,8 +341,12 @@ class SugarStackGame:
         self.carrier_speed = min(max_speed, self.carrier_speed + accel * dt)
         self.carrier_x += self.carrier_dir * self.carrier_speed * dt
 
-        left_bound = 12
-        right_bound = SCREEN_WIDTH - CUBE_SIZE - 12
+        # 좌우 이동 범위를 화면 중앙 기준으로 제한
+        margin = 12
+        center_x = (SCREEN_WIDTH - CUBE_SIZE) / 2
+        half = CARRIER_TRAVEL_WIDTH / 2
+        left_bound = max(margin, int(center_x - half))
+        right_bound = min(SCREEN_WIDTH - CUBE_SIZE - margin, int(center_x + half))
         if self.carrier_x <= left_bound:
             self.carrier_x = float(left_bound)
             self.carrier_dir = 1
@@ -447,8 +445,6 @@ class SugarStackGame:
         rect = rendered.get_rect(center=(SCREEN_WIDTH // 2, 220))
         self.screen.blit(rendered, rect)
 
-        self.screen.blit(self.font_small.render(f"최고: {self.best_score}", True, (40, 40, 40)), (14, 10))
-
         if self.state == "play":
             hint = "스페이스/아무 키/클릭/터치: 떨어뜨리기"
             self.screen.blit(self.font_small.render(hint, True, (40, 40, 40)), (14, 32))
@@ -522,9 +518,20 @@ class SugarStackGame:
             font_small=self.font_small,
             reason=self.game_over_reason or "무너졌어요!",
             score=self.score,
-            best_score=self.best_score,
-            hint="R: 재시작   ENTER: 타이틀",
+            hint="닉네임 입력 후 ENTER로 저장  |  ESC: 종료  |  R: 재시작",
         )
+        draw_input_box(surface=self.screen, font=self.font_small, label="닉네임", value=self.lb_nickname, y=360)
+        if self.lb_status:
+            rendered = self.font_small.render(self.lb_status, True, (60, 60, 60))
+            self.screen.blit(rendered, rendered.get_rect(center=(SCREEN_WIDTH // 2, 412)))
+        if self.lb_top:
+            draw_leaderboard_list(
+                self.screen,
+                font=self.font_small,
+                title="TOP 5",
+                entries=[(e.nickname, e.score) for e in self.lb_top],
+                y=440,
+            )
 
     # -------------------------
     # 메인 루프
@@ -558,7 +565,25 @@ class SugarStackGame:
                             self.state = "play"
                             self.reset_game()
                         elif event.key == pygame.K_RETURN:
-                            self.state = "title"
+                            if not self.lb_submitted:
+                                nick = self.lb_nickname
+                                self.lb_status = "저장 중..."
+
+                                def _cb(err: Optional[str], entries: Optional[list[LeaderboardEntry]]) -> None:
+                                    if err:
+                                        self.lb_status = f"저장 실패: {err}"
+                                        return
+                                    self.lb_status = "저장 완료!"
+                                    self.lb_submitted = True
+                                    self.lb_top = entries or []
+
+                                submit_and_fetch_async("stack", nick, self.score, callback=_cb)
+                            else:
+                                self.state = "title"
+                        elif event.key == pygame.K_BACKSPACE:
+                            self.lb_nickname = self.lb_nickname[:-1]
+                        elif event.unicode and len(self.lb_nickname) < 12 and event.unicode.isprintable():
+                            self.lb_nickname += event.unicode
 
                 if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                     mx, my = event.pos
@@ -580,11 +605,6 @@ class SugarStackGame:
 
             if self.state == "play":
                 self.update_play(dt)
-
-            if self.state == "gameover":
-                if self.score > self.best_score:
-                    self.best_score = self.score
-                    save_best_score(self.best_score)
 
             if self.state == "title":
                 self.draw_title()

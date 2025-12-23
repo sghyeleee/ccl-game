@@ -24,8 +24,6 @@ CHARACTER_BG = (222, 222, 235)
 CHARACTER_BORDER = (52, 52, 82)
 ACCENT = (0, 0, 0)
 INACTIVE_TEXT = (130, 130, 142)
-PROGRESS_BG = (223, 223, 230)
-PROGRESS_FILL = (69, 94, 220)
 STATUS_COLOR = (238, 94, 42)
 ASSET_DIR = Path(__file__).resolve().parent / "assets" / "main_game"
 TITLE_ASSET_DIR = Path(__file__).resolve().parent / "assets" / "new" / "01.title"
@@ -162,10 +160,10 @@ class BuriBuriPartyApp:
         self.games = get_game_entries()
         self.game_page = 0
         self.games_per_page = 4
-        self.best_scores: dict[str, Optional[int]] = {game.title: None for game in self.games}
         self.hovered_card_idx: Optional[int] = None
 
-        self.menu_items = ["게임 시작하기", "설정", "종료"]
+        # NOTE: 설정 메뉴는 아직 제공 기능이 없어서 임시로 숨김(주석처리)
+        self.menu_items = ["게임 시작하기", "종료"]
         self.menu_index = 0
         self.state = "title"
         self.running = True
@@ -195,10 +193,6 @@ class BuriBuriPartyApp:
         self.selected_character_idx = 0
         self.hovered_character_idx: Optional[int] = None
         self.current_character: Optional[CharacterOption] = None
-
-        self.level = 1
-        self.exp = 0
-        self.exp_to_next = 100
 
         self.status_message: Optional[str] = None
         self.status_until_ms = 0
@@ -237,7 +231,6 @@ class BuriBuriPartyApp:
             "character_card_border": "character_card_selected_border.png",
             "character_speech": "character_panel_speech_bubble.png",
             "character_box": "character_panel_box.png",
-            "exp_bar_frame": "exp_bar_frame.png",
             "game_card_idle": "game_card_idle.png",
             "game_card_hover": "game_card_hover.png",
             "options_background": "options_background.png",
@@ -350,8 +343,6 @@ class BuriBuriPartyApp:
         current_item = self.menu_items[self.menu_index]
         if current_item == "게임 시작하기":
             self._start_game()
-        elif current_item == "설정":
-            self.state = "options"
         elif current_item == "종료":
             self.running = False
 
@@ -493,17 +484,8 @@ class BuriBuriPartyApp:
         if current_surface is not None:
             self.screen = current_surface
         # 각 게임이 종료되면 pygame을 다시 초기화하지 않음
-        self._gain_experience(20)
-        self._show_status(f"{game_entry.title} 완료! 경험치 +20")
+        self._show_status(f"{game_entry.title} 완료!")
         self.state = "hub"
-
-    def _gain_experience(self, amount: int) -> None:
-        """미니게임 완료 후 경험치를 누적하고 레벨을 관리한다."""
-        self.exp += amount
-        while self.exp >= self.exp_to_next:
-            self.exp -= self.exp_to_next
-            self.level += 1
-            self.exp_to_next = int(self.exp_to_next * 1.2)
 
     def _update(self, delta_ms: int) -> None:
         """매 프레임 상태를 갱신한다."""
@@ -818,27 +800,6 @@ class BuriBuriPartyApp:
         helper = self.font_micro.render("ESC 또는 Enter로 돌아가기", True, INACTIVE_TEXT)
         self.screen.blit(helper, helper.get_rect(center=(SCREEN_WIDTH // 2, 360)))
 
-    def _draw_top_status_bar(self) -> None:
-        """레벨과 경험치 프로그레스 UI를 렌더링한다."""
-        name = self.current_character.display_name if self.current_character else "%레벨 명%"
-        header = self.font_small.render(f"{name}", True, ACCENT)
-        self.screen.blit(header, (60, 34))
-
-        level_label = self.font_medium.render(f"Lv.{self.level}", True, ACCENT)
-        self.screen.blit(level_label, (60, 70))
-
-        bar_rect = pygame.Rect(160, 88, 320, 16)
-        inner_rect = bar_rect.inflate(-8, -8)
-        progress_ratio = (self.exp / self.exp_to_next) if self.exp_to_next else 1.0
-        fill_width = int(inner_rect.width * max(0.0, min(1.0, progress_ratio)))
-        if fill_width > 0:
-            fill_rect = pygame.Rect(inner_rect.x, inner_rect.y, fill_width, inner_rect.height)
-            pygame.draw.rect(self.screen, PROGRESS_FILL, fill_rect, border_radius=6)
-        self.screen.blit(self.assets["exp_bar_frame"], bar_rect.topleft)
-
-        progress_text = self.font_micro.render(f"{self.exp} / {self.exp_to_next}", True, ACCENT)
-        self.screen.blit(progress_text, (bar_rect.right + 16, bar_rect.y - 6))
-
     def _draw_character_panel(self) -> None:
         """센터 영역의 캐릭터 말풍선 UI를 렌더링한다."""
         center_x = SCREEN_WIDTH // 2
@@ -882,13 +843,9 @@ class BuriBuriPartyApp:
 
             name = self.font_small.render(game.title, True, ACCENT)
             desc = self.font_micro.render(game.description, True, TITLE_BG)
-            best_score = self.best_scores.get(game.title)
-            score_text = "기록 없음" if best_score is None else f"{best_score:,}점"
-            score_surface = self.font_micro.render(f"최고점수 : {score_text}", True, TITLE_BG)
 
             self.screen.blit(name, (rect.x + 18, rect.y + 16))
             self.screen.blit(desc, (rect.x + 18, rect.y + 50))
-            self.screen.blit(score_surface, (rect.x + 18, rect.y + rect.height - 36))
 
             if is_hovered:
                 prompt = self.font_micro.render("클릭해서 플레이!", True, TITLE_BG)

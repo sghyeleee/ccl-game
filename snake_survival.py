@@ -4,15 +4,19 @@ import random
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Deque, Dict, List, Tuple
+from typing import Deque, Dict, List, Optional, Tuple
 
 import pygame
 
 from ui_common import draw_game_over_ui
+from leaderboard import LeaderboardEntry, submit_and_fetch_async
+from ui_common import draw_input_box, draw_leaderboard_list
 
-CELL_SIZE = 20
-GRID_WIDTH = 32
-GRID_HEIGHT = 22
+# 요청: 캐릭터/음식 등을 더 크게 보이게(20x20 → 30x30 느낌)
+# 화면(800x540, HUD 60)을 벗어나지 않도록 그리드 크기도 함께 조정한다.
+CELL_SIZE = 30
+GRID_WIDTH = 26
+GRID_HEIGHT = 16
 HUD_HEIGHT = 60
 SCREEN_WIDTH = 800
 SCREEN_HEIGHT = 540
@@ -24,6 +28,7 @@ BACKGROUND_COLOR = (12, 16, 28)
 TEXT_COLOR = (240, 240, 240)
 INITIAL_SPEED = 8  # moves per second
 SPEED_INCREMENT = 0.15
+GRID_OVERLAY_ALPHA = 40  # 0이면 격자 완전 제거, 숫자가 클수록 진해짐
 ASSET_DIR = Path(__file__).resolve().parent / "assets" / "snake_survival"
 NEW_ASSET_DIR = Path(__file__).resolve().parent / "assets" / "new" / "06.game3_dolyuburi"
 FONT_FILE = ASSET_DIR / "Pretendard-Regular.ttf"
@@ -70,6 +75,8 @@ class SpriteAssets:
     body_frames: List[pygame.Surface]
     tail_frames: List[pygame.Surface]
     food_frames: List[pygame.Surface]
+    # New theme: 친구(파랑/디폴트/빨강/노랑) 머리(방향별) 스프라이트
+    friend_head_frames: List[List[pygame.Surface]]
     background_tile: pygame.Surface
     grid_overlay: pygame.Surface
     hud_panel: pygame.Surface
@@ -100,6 +107,15 @@ def scale_to_cell(image: pygame.Surface) -> pygame.Surface:
     return pygame.transform.smoothscale(image, (CELL_SIZE, CELL_SIZE))
 
 
+def scale_to_width(image: pygame.Surface, target_width: int) -> pygame.Surface:
+    """Scale an image keeping aspect ratio by width."""
+    if image.get_width() == target_width:
+        return image
+    ratio = target_width / max(1, image.get_width())
+    target_height = max(1, int(image.get_height() * ratio))
+    return pygame.transform.smoothscale(image, (target_width, target_height))
+
+
 def slice_sheet(sheet: pygame.Surface, frame_width: int, frame_height: int) -> List[pygame.Surface]:
     """Split a sprite sheet into equal-sized frame surfaces."""
     frames = []
@@ -123,15 +139,20 @@ def load_assets() -> SpriteAssets:
             fallback = f"char_default_head_{dir_key}_140_140.png"
             filename = candidate if (NEW_ASSET_DIR / candidate).exists() else fallback
             head_frames.append(scale_to_cell(load_image(filename, base_dir=NEW_ASSET_DIR)))
-        # 몸통/꼬리는 “친구들” 이미지로 교체 (방향/코너 스프라이트가 없어서 색상 3종을 순환 사용)
-        friend_variants = [
-            scale_to_cell(load_image("char_blue_140_140.png", base_dir=NEW_ASSET_DIR)),
-            scale_to_cell(load_image("char_red_140_140.png", base_dir=NEW_ASSET_DIR)),
-            scale_to_cell(load_image("char_yell_140_140.png", base_dir=NEW_ASSET_DIR)),
-        ]
-        body_frames = friend_variants
-        tail_frames = friend_variants
-        food_frames = [scale_to_cell(load_image("item_gohome_140_140.png", base_dir=NEW_ASSET_DIR))]
+        # 친구(맵에 서있는 픽업) + 친구 머리(등 뒤에 붙는 세그먼트) 스프라이트
+        # 픽업은 'char_*_140_140', 세그먼트는 'char_*_head_{dir}_140_140' 사용
+        friend_kinds = ["blue", "default", "red", "yell"]
+        food_frames = [scale_to_cell(load_image(f"char_{k}_140_140.png", base_dir=NEW_ASSET_DIR)) for k in friend_kinds]
+        friend_head_frames: List[List[pygame.Surface]] = []
+        for k in friend_kinds:
+            frames = []
+            for dir_key in ("up", "down", "left", "right"):
+                frames.append(scale_to_cell(load_image(f"char_{k}_head_{dir_key}_140_140.png", base_dir=NEW_ASSET_DIR)))
+            friend_head_frames.append(frames)
+
+        # 기존 API 호환을 위해 body/tail은 일단 픽업 프레임을 재사용(실제 렌더링은 friend_head_frames 사용)
+        body_frames = food_frames
+        tail_frames = food_frames
 
         # 배경은 800x540 전체 배경 1장을 사용
         background_tile = load_image("tile_background_800_540.png", base_dir=NEW_ASSET_DIR)
@@ -139,26 +160,41 @@ def load_assets() -> SpriteAssets:
             background_tile = pygame.transform.smoothscale(background_tile, (SCREEN_WIDTH, SCREEN_HEIGHT))
     else:
         # Legacy snake assets
-        head_frames = slice_sheet(load_image("snake_head.png"), CELL_SIZE, CELL_SIZE)
-        body_frames = slice_sheet(load_image("snake_body.png"), CELL_SIZE, CELL_SIZE)
-        tail_frames = slice_sheet(load_image("snake_tail.png"), CELL_SIZE, CELL_SIZE)
-        food_frames = slice_sheet(load_image("food_fruit_sheet.png"), CELL_SIZE, CELL_SIZE)
+        SOURCE_CELL = 20
+        head_frames = [scale_to_cell(f) for f in slice_sheet(load_image("snake_head.png"), SOURCE_CELL, SOURCE_CELL)]
+        body_frames = [scale_to_cell(f) for f in slice_sheet(load_image("snake_body.png"), SOURCE_CELL, SOURCE_CELL)]
+        tail_frames = [scale_to_cell(f) for f in slice_sheet(load_image("snake_tail.png"), SOURCE_CELL, SOURCE_CELL)]
+        food_frames = [scale_to_cell(f) for f in slice_sheet(load_image("food_fruit_sheet.png"), SOURCE_CELL, SOURCE_CELL)]
         background_tile = load_image("background_tile.png")
+        friend_head_frames = []
 
     # Keep legacy UI/effects (new pack doesn't include these)
-    grid_overlay = load_image("grid_overlay.png")
+    grid_overlay = scale_to_cell(load_image("grid_overlay.png"))
+    if GRID_OVERLAY_ALPHA <= 0:
+        # draw_background에서 스킵 가능하도록 투명 처리
+        grid_overlay = grid_overlay.copy()
+        grid_overlay.set_alpha(0)
+    else:
+        grid_overlay = grid_overlay.copy()
+        grid_overlay.set_alpha(max(0, min(255, GRID_OVERLAY_ALPHA)))
     hud_panel = load_image("hud_panel.png")
     game_over_card = load_image("game_over_card.png")
-    shadow = load_image("shadow_ellipse.png")
+    shadow = scale_to_width(load_image("shadow_ellipse.png"), CELL_SIZE)
     spark_sheet = load_image("spark_effect.png")
     spark_frame_width = spark_sheet.get_width() // 4
-    spark_frames = slice_sheet(spark_sheet, spark_frame_width, spark_sheet.get_height())
+    # 셀 크기 증가에 맞춰 이펙트도 약간 키운다(원본은 20 기준으로 가정)
+    spark_scale = CELL_SIZE / 20
+    spark_frames = [
+        pygame.transform.smoothscale(f, (max(1, int(f.get_width() * spark_scale)), max(1, int(f.get_height() * spark_scale))))
+        for f in slice_sheet(spark_sheet, spark_frame_width, spark_sheet.get_height())
+    ]
 
     return SpriteAssets(
         head_frames=head_frames,
         body_frames=body_frames,
         tail_frames=tail_frames,
         food_frames=food_frames,
+        friend_head_frames=friend_head_frames,
         background_tile=background_tile,
         grid_overlay=grid_overlay,
         hud_panel=hud_panel,
@@ -215,12 +251,14 @@ def draw_background(
             for y in range(0, SCREEN_HEIGHT, tile_height):
                 surface.blit(background_tile, (x, y))
 
-    for x in range(0, GRID_PIXEL_WIDTH, CELL_SIZE):
-        for y in range(0, GRID_PIXEL_HEIGHT, CELL_SIZE):
-            surface.blit(
-                grid_overlay,
-                (PLAYFIELD_OFFSET_X + x, PLAYFIELD_OFFSET_Y + y),
-            )
+    # 격자는 너무 진하지 않게(또는 완전 제거) 처리
+    if grid_overlay.get_alpha() != 0:
+        for x in range(0, GRID_PIXEL_WIDTH, CELL_SIZE):
+            for y in range(0, GRID_PIXEL_HEIGHT, CELL_SIZE):
+                surface.blit(
+                    grid_overlay,
+                    (PLAYFIELD_OFFSET_X + x, PLAYFIELD_OFFSET_Y + y),
+                )
 
 
 def draw_snake(
@@ -231,6 +269,9 @@ def draw_snake(
     tail_frames: List[pygame.Surface],
     current_direction: Direction,
     shadow: pygame.Surface,
+    *,
+    friend_head_frames: Optional[List[List[pygame.Surface]]] = None,
+    friend_kinds: Optional[List[int]] = None,
 ) -> None:
     """Draw the snake using sprite assets for head, body, and tail."""
     shadow_offset_x = (CELL_SIZE - shadow.get_width()) // 2
@@ -247,6 +288,16 @@ def draw_snake(
             direction_index = DIRECTION_TO_INDEX.get(current_direction, DIRECTION_TO_INDEX[RIGHT])
             surface.blit(head_frames[direction_index], pixel)
             continue
+
+        # New theme: 등 뒤 친구는 각자 'head' 스프라이트로 표시한다.
+        if friend_head_frames and friend_kinds and idx - 1 < len(friend_kinds):
+            kind = friend_kinds[idx - 1]
+            prev_segment = snake[idx - 1]
+            seg_dir = direction_between(segment, prev_segment)
+            direction_index = DIRECTION_TO_INDEX.get(seg_dir, DIRECTION_TO_INDEX[RIGHT])
+            if 0 <= kind < len(friend_head_frames):
+                surface.blit(friend_head_frames[kind][direction_index], pixel)
+                continue
 
         if idx == len(snake) - 1:
             prev_segment = snake[idx - 1]
@@ -291,18 +342,25 @@ def draw_hud(
     hud_panel: pygame.Surface,
     font: pygame.font.Font,
     score: int,
-    best: int,
     speed: float,
 ) -> None:
     """Render the HUD panel with score information."""
-    hud_width = hud_panel.get_width()
-    hud_x = (SCREEN_WIDTH - hud_width) // 2
-    surface.blit(hud_panel, (hud_x, 0))
+    # 기존 hud_panel.png는 색이 너무 진하고 폭이 작아 보이므로
+    # 화면 폭에 맞는 밝은 반투명 패널을 코드로 그려 통일한다.
+    _ = hud_panel
+    panel_margin = 24
+    panel_rect = pygame.Rect(panel_margin, 10, SCREEN_WIDTH - panel_margin * 2, 44)
 
-    section = hud_width // 3
-    surface.blit(font.render(f"친구 수: {score}", True, TEXT_COLOR), (hud_x + 20, 12))
-    surface.blit(font.render(f"최고: {best}", True, TEXT_COLOR), (hud_x + section + 20, 12))
-    surface.blit(font.render(f"속도: {speed:.1f}/s", True, TEXT_COLOR), (hud_x + section * 2 + 20, 12))
+    panel = pygame.Surface(panel_rect.size, pygame.SRCALPHA)
+    pygame.draw.rect(panel, (255, 255, 255, 165), panel.get_rect(), border_radius=18)
+    pygame.draw.rect(panel, (30, 30, 30, 90), panel.get_rect(), width=2, border_radius=18)
+    surface.blit(panel, panel_rect.topleft)
+
+    left_text = font.render(f"친구 수: {score}", True, (30, 30, 30))
+    right_text = font.render(f"속도: {speed:.1f}/s", True, (30, 30, 30))
+
+    surface.blit(left_text, (panel_rect.x + 18, panel_rect.y + 12))
+    surface.blit(right_text, (panel_rect.right - right_text.get_width() - 18, panel_rect.y + 12))
 
 
 def draw_game_over(
@@ -407,23 +465,29 @@ def run_game(*, quit_on_exit: bool = True) -> None:
     mode: str = "title"  # title | howto | play
 
     snake: List[Point] = []
+    # head(플레이어) 뒤에 붙는 친구 종류(0..3): blue/default/red/yell
+    friend_kinds: List[int] = []
     current_direction: Direction = (1, 0)
     direction_queue: Deque[Direction] = deque()
-    food: Point = (0, 0)
-    food_variant = 0
+    friend_pos: Point = (0, 0)
+    friend_kind = 0
     move_timer = 0.0
     moves_per_second = INITIAL_SPEED
     score = 1
-    best_score = 1
     game_over = False
     sparks: List[SparkEffect] = []
+    lb_nickname = ""
+    lb_status: Optional[str] = None
+    lb_top: list[LeaderboardEntry] = []
+    lb_submitted = False
 
     def reset_play() -> None:
-        nonlocal snake, current_direction, food, food_variant, move_timer, moves_per_second, score, game_over
+        nonlocal snake, current_direction, friend_pos, friend_kind, move_timer, moves_per_second, score, game_over
         snake = [(GRID_WIDTH // 2, GRID_HEIGHT // 2)]
+        friend_kinds.clear()
         current_direction = (1, 0)
         direction_queue.clear()
-        food, food_variant = spawn_food(snake, len(assets.food_frames))
+        friend_pos, friend_kind = spawn_food(snake, len(assets.food_frames))
         move_timer = 0.0
         moves_per_second = INITIAL_SPEED
         score = 1
@@ -460,10 +524,35 @@ def run_game(*, quit_on_exit: bool = True) -> None:
                     continue
 
                 # play 모드 입력
-                if event.key == pygame.K_r and game_over:
-                    reset_play()
-                if event.key == pygame.K_RETURN and game_over:
-                    mode = "title"
+                if game_over:
+                    if event.key == pygame.K_r:
+                        reset_play()
+                        lb_nickname = ""
+                        lb_status = None
+                        lb_top = []
+                        lb_submitted = False
+                    elif event.key == pygame.K_RETURN:
+                        if not lb_submitted:
+                            nick = lb_nickname
+                            lb_status = "저장 중..."
+
+                            def _cb(err: Optional[str], entries: Optional[list[LeaderboardEntry]]) -> None:
+                                nonlocal lb_status, lb_submitted, lb_top
+                                if err:
+                                    lb_status = f"저장 실패: {err}"
+                                    return
+                                lb_status = "저장 완료!"
+                                lb_submitted = True
+                                lb_top = entries or []
+
+                            submit_and_fetch_async("spin", nick, score, callback=_cb)
+                        else:
+                            mode = "title"
+                    elif event.key == pygame.K_BACKSPACE:
+                        lb_nickname = lb_nickname[:-1]
+                    elif event.unicode and len(lb_nickname) < 12 and event.unicode.isprintable():
+                        lb_nickname += event.unicode
+                    continue
                 if mode == "play" and not game_over:
                     if event.key in (pygame.K_UP, pygame.K_w):
                         direction_queue.append((0, -1))
@@ -506,11 +595,12 @@ def run_game(*, quit_on_exit: bool = True) -> None:
                     game_over = True
                 else:
                     snake.insert(0, new_head)
-                    if new_head == food:
+                    if new_head == friend_pos:
                         score += 1
-                        best_score = max(best_score, score)
                         moves_per_second += SPEED_INCREMENT
-                        food, food_variant = spawn_food(snake, len(assets.food_frames))
+                        # 구출한 친구의 head가 등 뒤(꼬리 세그먼트)로 붙는다.
+                        friend_kinds.append(friend_kind)
+                        friend_pos, friend_kind = spawn_food(snake, len(assets.food_frames))
                         center = (
                             PLAYFIELD_OFFSET_X + new_head[0] * CELL_SIZE + CELL_SIZE // 2,
                             PLAYFIELD_OFFSET_Y + new_head[1] * CELL_SIZE + CELL_SIZE // 2,
@@ -566,10 +656,12 @@ def run_game(*, quit_on_exit: bool = True) -> None:
                 assets.tail_frames,
                 current_direction,
                 assets.shadow,
+                friend_head_frames=assets.friend_head_frames,
+                friend_kinds=friend_kinds,
             )
-            draw_food(screen, food, assets.food_frames, food_variant, assets.shadow)
+            draw_food(screen, friend_pos, assets.food_frames, friend_kind, assets.shadow)
             draw_sparks(screen, assets.spark_frames, sparks)
-            draw_hud(screen, assets.hud_panel, font, score, best_score, moves_per_second)
+            draw_hud(screen, assets.hud_panel, font, score, moves_per_second)
 
             if game_over:
                 draw_game_over_ui(
@@ -579,9 +671,20 @@ def run_game(*, quit_on_exit: bool = True) -> None:
                     font_small=font_small,
                     reason="벽이나 내 몸에 부딪혔어요!",
                     score=score,
-                    best_score=best_score,
-                    hint="R: 재시작   ENTER: 타이틀",
+                    hint="닉네임 입력 후 ENTER로 저장  |  ESC: 종료  |  R: 재시작",
                 )
+                draw_input_box(surface=screen, font=font_small, label="닉네임", value=lb_nickname, y=360)
+                if lb_status:
+                    rendered = font_small.render(lb_status, True, (60, 60, 60))
+                    screen.blit(rendered, rendered.get_rect(center=(SCREEN_WIDTH // 2, 412)))
+                if lb_top:
+                    draw_leaderboard_list(
+                        screen,
+                        font=font_small,
+                        title="TOP 5",
+                        entries=[(e.nickname, e.score) for e in lb_top],
+                        y=440,
+                    )
 
         pygame.display.flip()
 

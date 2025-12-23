@@ -33,7 +33,6 @@ def draw_game_over_ui(
     font_small: pygame.font.Font,
     reason: str,
     score: int,
-    best_score: int | None,
     hint: str,
 ) -> None:
     """세 게임 공통 게임오버 UI(오버레이 + 카드 + 텍스트)."""
@@ -46,8 +45,44 @@ def draw_game_over_ui(
     draw_text_center(surface, font_title, "게임오버", card.top + 52, color=(20, 20, 20))
     draw_text_center(surface, font, reason, card.top + 94, color=(60, 60, 60))
     draw_text_center(surface, font_title, str(score), card.top + 155, color=(35, 35, 35))
-    if best_score is not None:
-        draw_text_center(surface, font_small, f"최고 기록: {best_score}", card.top + 198, color=(70, 70, 70))
     draw_text_center(surface, font_small, hint, card.top + 222, color=(70, 70, 70))
+
+
+def draw_input_box(
+    surface: pygame.Surface,
+    *,
+    font: pygame.font.Font,
+    label: str,
+    value: str,
+    y: int,
+    width: int = 360,
+) -> pygame.Rect:
+    """게임오버 카드 위에 닉네임 입력 박스를 그린다."""
+    w, _ = surface.get_size()
+    rect = pygame.Rect((w - width) // 2, y, width, 44)
+    draw_card(surface, rect)
+    text = f"{label}: {value}"
+    rendered = font.render(text, True, (30, 30, 30))
+    surface.blit(rendered, rendered.get_rect(midleft=(rect.x + 16, rect.centery)))
+    return rect
+
+
+def draw_leaderboard_list(
+    surface: pygame.Surface,
+    *,
+    font: pygame.font.Font,
+    title: str,
+    entries: list[tuple[str, int]],
+    y: int,
+) -> None:
+    w, _ = surface.get_size()
+    header = font.render(title, True, (30, 30, 30))
+    surface.blit(header, header.get_rect(center=(w // 2, y)))
+    yy = y + 26
+    for idx, (name, score) in enumerate(entries[:5], start=1):
+        line = f"{idx}. {name}  -  {score}"
+        rendered = font.render(line, True, (60, 60, 60))
+        surface.blit(rendered, rendered.get_rect(center=(w // 2, yy)))
+        yy += 22
 
 

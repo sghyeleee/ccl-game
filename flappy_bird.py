@@ -8,7 +8,8 @@ from typing import Optional
 
 import pygame
 
-from ui_common import draw_game_over_ui
+from leaderboard import LeaderboardEntry, submit_and_fetch_async
+from ui_common import draw_game_over_ui, draw_input_box, draw_leaderboard_list
 
 SCREEN_WIDTH = 800
 SCREEN_HEIGHT = 540
@@ -44,7 +45,6 @@ PIPE_SPEED_PER_SCORE = 2.2
 PIPE_SPAWN_INTERVAL_MIN_MS = 1050
 PIPE_SPAWN_INTERVAL_MAX_MS = 1550
 
-BEST_SCORE_FILE = Path(__file__).resolve().parent / ".flappy_best_score"
 NEW_ASSET_DIR = Path(__file__).resolve().parent / "assets" / "new" / "05. game2_naraburi"
 FONT_DIR = Path(__file__).resolve().parent / "assets" / "fonts"
 NEODGM_FONT_FILE = FONT_DIR / "neodgm.ttf"
@@ -76,22 +76,6 @@ def get_font(size: int, bold: bool = False) -> pygame.font.Font:
         if font_path:
             return pygame.font.Font(font_path, size)
     return pygame.font.SysFont(None, size, bold=bold)
-
-
-def load_best_score() -> int:
-    try:
-        if BEST_SCORE_FILE.exists():
-            return int(BEST_SCORE_FILE.read_text(encoding="utf-8").strip() or "0")
-    except Exception:
-        pass
-    return 0
-
-
-def save_best_score(score: int) -> None:
-    try:
-        BEST_SCORE_FILE.write_text(str(score), encoding="utf-8")
-    except Exception:
-        pass
 
 
 def _load_image(path: Path) -> pygame.Surface:
@@ -148,8 +132,10 @@ class FlappyBirdGame:
         self.state: str = "title"  # title | howto | play | gameover
         self.running = True
         self.menu_index = 0  # 0=start, 1=howto
-
-        self.best_score = load_best_score()
+        self.lb_nickname = ""
+        self.lb_status: Optional[str] = None
+        self.lb_top: list[LeaderboardEntry] = []
+        self.lb_submitted = False
 
         self.use_new_assets = NEW_ASSET_DIR.exists()
         self.bg_surface: Optional[pygame.Surface] = None
@@ -239,26 +225,10 @@ class FlappyBirdGame:
         max_center = PIPE_GAP_CENTER_MAX_Y
         gap_y = float(random.randint(min_center, max_center))
 
-        # 일부는 “움직이는 갭” 타입으로 변주
-        # 움직이는 파이프는 “변주” 용도라 초반엔 빼고, 속도/진폭도 과하지 않게 제한한다.
-        # (너무 빠르면 사실상 확정 사망 패턴이 나오기 쉬움)
-        if self.score < 5:
-            moving_chance = 0.0
-        else:
-            moving_chance = min(0.16, 0.08 + (self.score - 5) * 0.01)
-
-        if random.random() < moving_chance:
-            # 갭이 좁을수록 움직임은 더 “느리고 작게”
-            base_amp = random.uniform(12.0, 28.0)
-            amp_cap = max(10.0, (gap - 120) * 0.35)
-            amp = min(base_amp, amp_cap)
-
-            speed = random.uniform(0.6, 1.05)  # radians/sec (이전보다 확실히 느리게)
-            phase = random.uniform(0.0, math.tau)
-        else:
-            amp = 0.0
-            speed = 0.0
-            phase = 0.0
+        # 움직이는 장애물은 난이도가 높아서 제거: 항상 고정 장애물만 생성
+        amp = 0.0
+        speed = 0.0
+        phase = 0.0
 
         self.pipes.append(
             PipePair(
@@ -482,7 +452,6 @@ class FlappyBirdGame:
         rendered = self.font_big.render(str(self.score), True, (30, 30, 30))
         rect = rendered.get_rect(center=(SCREEN_WIDTH // 2, 130))
         self.screen.blit(rendered, rect)
-        self.screen.blit(self.font_small.render(f"최고: {self.best_score}", True, (50, 50, 50)), (14, 10))
 
     def draw_title(self) -> None:
         self.draw_background()
@@ -545,9 +514,20 @@ class FlappyBirdGame:
             font_small=self.font_small,
             reason=self.game_over_reason or "부딪혔어요!",
             score=self.score,
-            best_score=self.best_score,
-            hint="스페이스/클릭: 재시작   ENTER: 타이틀",
+            hint="닉네임 입력 후 ENTER로 저장  |  ESC: 종료  |  R: 재시작",
         )
+        draw_input_box(surface=self.screen, font=self.font_small, label="닉네임", value=self.lb_nickname, y=360)
+        if self.lb_status:
+            draw_text = self.font_small.render(self.lb_status, True, (60, 60, 60))
+            self.screen.blit(draw_text, draw_text.get_rect(center=(SCREEN_WIDTH // 2, 412)))
+        if self.lb_top:
+            draw_leaderboard_list(
+                self.screen,
+                font=self.font_small,
+                title="TOP 5",
+                entries=[(e.nickname, e.score) for e in self.lb_top],
+                y=440,
+            )
 
     # -------------------
     # 메인 루프
@@ -583,9 +563,38 @@ class FlappyBirdGame:
                                 self.state = "howto"
                         continue
 
-                    if self.state == "gameover" and event.key == pygame.K_RETURN:
-                        self.state = "title"
-                        continue
+                    if self.state == "gameover":
+                        if event.key == pygame.K_r:
+                            self.lb_nickname = ""
+                            self.lb_status = None
+                            self.lb_top = []
+                            self.lb_submitted = False
+                            self.state = "play"
+                            self.reset_run()
+                            continue
+                        if event.key == pygame.K_RETURN:
+                            if not self.lb_submitted:
+                                nick = self.lb_nickname
+                                self.lb_status = "저장 중..."
+
+                                def _cb(err: Optional[str], entries: Optional[list[LeaderboardEntry]]) -> None:
+                                    if err:
+                                        self.lb_status = f"저장 실패: {err}"
+                                        return
+                                    self.lb_status = "저장 완료!"
+                                    self.lb_submitted = True
+                                    self.lb_top = entries or []
+
+                                submit_and_fetch_async("fly", nick, self.score, callback=_cb)
+                            else:
+                                self.state = "title"
+                            continue
+                        if event.key == pygame.K_BACKSPACE:
+                            self.lb_nickname = self.lb_nickname[:-1]
+                            continue
+                        if event.unicode and len(self.lb_nickname) < 12 and event.unicode.isprintable():
+                            self.lb_nickname += event.unicode
+                            continue
 
                     # 플래피는 “아무 키/스페이스”가 곧 플랩
                     self.flap()
@@ -609,11 +618,6 @@ class FlappyBirdGame:
 
             if self.state == "play":
                 self.update_play(dt)
-
-            if self.state == "gameover":
-                if self.score > self.best_score:
-                    self.best_score = self.score
-                    save_best_score(self.best_score)
 
             if self.state == "title":
                 self.draw_title()
