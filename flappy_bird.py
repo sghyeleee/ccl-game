@@ -8,8 +8,7 @@ from typing import Optional
 
 import pygame
 
-from leaderboard import LeaderboardEntry, submit_and_fetch_async
-from ui_common import draw_game_over_ui, draw_input_box, draw_leaderboard_list
+from ui_common import draw_game_over_ui
 
 SCREEN_WIDTH = 800
 SCREEN_HEIGHT = 540
@@ -132,10 +131,6 @@ class FlappyBirdGame:
         self.state: str = "title"  # title | howto | play | gameover
         self.running = True
         self.menu_index = 0  # 0=start, 1=howto
-        self.lb_nickname = ""
-        self.lb_status: Optional[str] = None
-        self.lb_top: list[LeaderboardEntry] = []
-        self.lb_submitted = False
 
         self.use_new_assets = NEW_ASSET_DIR.exists()
         self.bg_surface: Optional[pygame.Surface] = None
@@ -514,20 +509,8 @@ class FlappyBirdGame:
             font_small=self.font_small,
             reason=self.game_over_reason or "부딪혔어요!",
             score=self.score,
-            hint="닉네임 입력 후 ENTER로 저장  |  ESC: 종료  |  R: 재시작",
+            hint="R: 재시작   ENTER: 타이틀",
         )
-        draw_input_box(surface=self.screen, font=self.font_small, label="닉네임", value=self.lb_nickname, y=360)
-        if self.lb_status:
-            draw_text = self.font_small.render(self.lb_status, True, (60, 60, 60))
-            self.screen.blit(draw_text, draw_text.get_rect(center=(SCREEN_WIDTH // 2, 412)))
-        if self.lb_top:
-            draw_leaderboard_list(
-                self.screen,
-                font=self.font_small,
-                title="TOP 5",
-                entries=[(e.nickname, e.score) for e in self.lb_top],
-                y=440,
-            )
 
     # -------------------
     # 메인 루프
@@ -565,35 +548,11 @@ class FlappyBirdGame:
 
                     if self.state == "gameover":
                         if event.key == pygame.K_r:
-                            self.lb_nickname = ""
-                            self.lb_status = None
-                            self.lb_top = []
-                            self.lb_submitted = False
                             self.state = "play"
                             self.reset_run()
                             continue
                         if event.key == pygame.K_RETURN:
-                            if not self.lb_submitted:
-                                nick = self.lb_nickname
-                                self.lb_status = "저장 중..."
-
-                                def _cb(err: Optional[str], entries: Optional[list[LeaderboardEntry]]) -> None:
-                                    if err:
-                                        self.lb_status = f"저장 실패: {err}"
-                                        return
-                                    self.lb_status = "저장 완료!"
-                                    self.lb_submitted = True
-                                    self.lb_top = entries or []
-
-                                submit_and_fetch_async("fly", nick, self.score, callback=_cb)
-                            else:
-                                self.state = "title"
-                            continue
-                        if event.key == pygame.K_BACKSPACE:
-                            self.lb_nickname = self.lb_nickname[:-1]
-                            continue
-                        if event.unicode and len(self.lb_nickname) < 12 and event.unicode.isprintable():
-                            self.lb_nickname += event.unicode
+                            self.state = "title"
                             continue
 
                     # 플래피는 “아무 키/스페이스”가 곧 플랩

@@ -8,8 +8,6 @@ from typing import Optional, Tuple
 import pygame
 
 from ui_common import draw_game_over_ui
-from leaderboard import LeaderboardEntry, submit_and_fetch_async
-from ui_common import draw_input_box, draw_leaderboard_list
 
 # =========================
 # 기본 설정
@@ -130,10 +128,6 @@ class SugarStackGame:
 
         self.state: str = "title"  # title | howto | play | gameover
         self.running = True
-        self.lb_nickname = ""
-        self.lb_status: Optional[str] = None
-        self.lb_top: list[LeaderboardEntry] = []
-        self.lb_submitted = False
 
         # New theme assets (쌓아부리)
         self.use_new_assets = NEW_ASSET_DIR.exists()
@@ -219,10 +213,6 @@ class SugarStackGame:
         )
 
         self.game_over_reason: Optional[str] = None
-        self.lb_nickname = ""
-        self.lb_status = None
-        self.lb_top = []
-        self.lb_submitted = False
 
     def spawn_held_cube(self) -> None:
         kind = 0
@@ -518,20 +508,8 @@ class SugarStackGame:
             font_small=self.font_small,
             reason=self.game_over_reason or "무너졌어요!",
             score=self.score,
-            hint="닉네임 입력 후 ENTER로 저장  |  ESC: 종료  |  R: 재시작",
+            hint="R: 재시작   ENTER: 타이틀",
         )
-        draw_input_box(surface=self.screen, font=self.font_small, label="닉네임", value=self.lb_nickname, y=360)
-        if self.lb_status:
-            rendered = self.font_small.render(self.lb_status, True, (60, 60, 60))
-            self.screen.blit(rendered, rendered.get_rect(center=(SCREEN_WIDTH // 2, 412)))
-        if self.lb_top:
-            draw_leaderboard_list(
-                self.screen,
-                font=self.font_small,
-                title="TOP 5",
-                entries=[(e.nickname, e.score) for e in self.lb_top],
-                y=440,
-            )
 
     # -------------------------
     # 메인 루프
@@ -565,25 +543,7 @@ class SugarStackGame:
                             self.state = "play"
                             self.reset_game()
                         elif event.key == pygame.K_RETURN:
-                            if not self.lb_submitted:
-                                nick = self.lb_nickname
-                                self.lb_status = "저장 중..."
-
-                                def _cb(err: Optional[str], entries: Optional[list[LeaderboardEntry]]) -> None:
-                                    if err:
-                                        self.lb_status = f"저장 실패: {err}"
-                                        return
-                                    self.lb_status = "저장 완료!"
-                                    self.lb_submitted = True
-                                    self.lb_top = entries or []
-
-                                submit_and_fetch_async("stack", nick, self.score, callback=_cb)
-                            else:
-                                self.state = "title"
-                        elif event.key == pygame.K_BACKSPACE:
-                            self.lb_nickname = self.lb_nickname[:-1]
-                        elif event.unicode and len(self.lb_nickname) < 12 and event.unicode.isprintable():
-                            self.lb_nickname += event.unicode
+                            self.state = "title"
 
                 if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                     mx, my = event.pos

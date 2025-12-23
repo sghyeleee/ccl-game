@@ -9,8 +9,6 @@ from typing import Deque, Dict, List, Optional, Tuple
 import pygame
 
 from ui_common import draw_game_over_ui
-from leaderboard import LeaderboardEntry, submit_and_fetch_async
-from ui_common import draw_input_box, draw_leaderboard_list
 
 # 요청: 캐릭터/음식 등을 더 크게 보이게(20x20 → 30x30 느낌)
 # 화면(800x540, HUD 60)을 벗어나지 않도록 그리드 크기도 함께 조정한다.
@@ -476,10 +474,6 @@ def run_game(*, quit_on_exit: bool = True) -> None:
     score = 1
     game_over = False
     sparks: List[SparkEffect] = []
-    lb_nickname = ""
-    lb_status: Optional[str] = None
-    lb_top: list[LeaderboardEntry] = []
-    lb_submitted = False
 
     def reset_play() -> None:
         nonlocal snake, current_direction, friend_pos, friend_kind, move_timer, moves_per_second, score, game_over
@@ -527,31 +521,8 @@ def run_game(*, quit_on_exit: bool = True) -> None:
                 if game_over:
                     if event.key == pygame.K_r:
                         reset_play()
-                        lb_nickname = ""
-                        lb_status = None
-                        lb_top = []
-                        lb_submitted = False
                     elif event.key == pygame.K_RETURN:
-                        if not lb_submitted:
-                            nick = lb_nickname
-                            lb_status = "저장 중..."
-
-                            def _cb(err: Optional[str], entries: Optional[list[LeaderboardEntry]]) -> None:
-                                nonlocal lb_status, lb_submitted, lb_top
-                                if err:
-                                    lb_status = f"저장 실패: {err}"
-                                    return
-                                lb_status = "저장 완료!"
-                                lb_submitted = True
-                                lb_top = entries or []
-
-                            submit_and_fetch_async("spin", nick, score, callback=_cb)
-                        else:
-                            mode = "title"
-                    elif event.key == pygame.K_BACKSPACE:
-                        lb_nickname = lb_nickname[:-1]
-                    elif event.unicode and len(lb_nickname) < 12 and event.unicode.isprintable():
-                        lb_nickname += event.unicode
+                        mode = "title"
                     continue
                 if mode == "play" and not game_over:
                     if event.key in (pygame.K_UP, pygame.K_w):
@@ -671,20 +642,8 @@ def run_game(*, quit_on_exit: bool = True) -> None:
                     font_small=font_small,
                     reason="벽이나 내 몸에 부딪혔어요!",
                     score=score,
-                    hint="닉네임 입력 후 ENTER로 저장  |  ESC: 종료  |  R: 재시작",
+                    hint="R: 재시작   ENTER: 타이틀",
                 )
-                draw_input_box(surface=screen, font=font_small, label="닉네임", value=lb_nickname, y=360)
-                if lb_status:
-                    rendered = font_small.render(lb_status, True, (60, 60, 60))
-                    screen.blit(rendered, rendered.get_rect(center=(SCREEN_WIDTH // 2, 412)))
-                if lb_top:
-                    draw_leaderboard_list(
-                        screen,
-                        font=font_small,
-                        title="TOP 5",
-                        entries=[(e.nickname, e.score) for e in lb_top],
-                        y=440,
-                    )
 
         pygame.display.flip()
 
