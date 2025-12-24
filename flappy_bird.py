@@ -45,6 +45,9 @@ PIPE_SPAWN_INTERVAL_MIN_MS = 1050
 PIPE_SPAWN_INTERVAL_MAX_MS = 1550
 
 NEW_ASSET_DIR = Path(__file__).resolve().parent / "assets" / "new" / "05. game2_naraburi"
+MP3_ASSET_DIR = Path(__file__).resolve().parent / "assets" / "mp3"
+SFX_FILE = MP3_ASSET_DIR / "happy-pop-2-185287.mp3"
+SFX_GAMEOVER_FILE = MP3_ASSET_DIR / "negative_beeps-6008.mp3"
 FONT_DIR = Path(__file__).resolve().parent / "assets" / "fonts"
 NEODGM_FONT_FILE = FONT_DIR / "neodgm.ttf"
 
@@ -128,6 +131,13 @@ class FlappyBirdGame:
         self.font = get_font(20)
         self.font_small = get_font(16)
 
+        # SFX: 플랩(위로 이동) 시 재생
+        self.sfx_pop: Optional[pygame.mixer.Sound] = None
+        # SFX: 게임오버 시 재생(+ BGM pause)
+        self.sfx_gameover: Optional[pygame.mixer.Sound] = None
+        self._bgm_paused_for_gameover = False
+        self._init_sfx()
+
         self.state: str = "title"  # title | howto | play | gameover
         self.running = True
         self.menu_index = 0  # 0=start, 1=howto
@@ -146,6 +156,52 @@ class FlappyBirdGame:
         self.btn_start = pygame.Rect(btn_x, 300, btn_w, btn_h)
         self.btn_howto = pygame.Rect(btn_x, 378, btn_w, btn_h)
         self.btn_back = pygame.Rect(26, 22, 110, 46)
+
+    def _init_sfx(self) -> None:
+        if not SFX_FILE.exists():
+            pass
+        try:
+            if pygame.mixer.get_init() is None:
+                pygame.mixer.init()
+            if SFX_FILE.exists():
+                sfx = pygame.mixer.Sound(SFX_FILE.as_posix())
+                sfx.set_volume(0.55)
+                self.sfx_pop = sfx
+            if SFX_GAMEOVER_FILE.exists():
+                sfx_go = pygame.mixer.Sound(SFX_GAMEOVER_FILE.as_posix())
+                sfx_go.set_volume(0.75)
+                self.sfx_gameover = sfx_go
+        except Exception:
+            self.sfx_pop = None
+            self.sfx_gameover = None
+
+    def _enter_gameover(self, reason: str) -> None:
+        """게임오버 진입: BGM을 멈추고(일시정지) 효과음을 1회 재생한다."""
+        self.game_over_reason = reason
+        if not self._bgm_paused_for_gameover:
+            try:
+                if pygame.mixer.get_init() is not None and pygame.mixer.music.get_busy():
+                    pygame.mixer.music.pause()
+            except Exception:
+                pass
+            if self.sfx_gameover is not None:
+                try:
+                    self.sfx_gameover.play()
+                except Exception:
+                    pass
+            self._bgm_paused_for_gameover = True
+        self.state = "gameover"
+
+    def _resume_bgm(self) -> None:
+        """게임 재개 시 BGM을 다시 재생한다."""
+        if not self._bgm_paused_for_gameover:
+            return
+        try:
+            if pygame.mixer.get_init() is not None:
+                pygame.mixer.music.unpause()
+        except Exception:
+            pass
+        self._bgm_paused_for_gameover = False
 
     def _load_assets(self) -> None:
         if not self.use_new_assets:
@@ -191,6 +247,11 @@ class FlappyBirdGame:
         if self.state != "play":
             return
         self.bird_vy = JUMP_VELOCITY
+        if self.sfx_pop is not None:
+            try:
+                self.sfx_pop.play()
+            except Exception:
+                pass
         return
 
     def _compute_spawn_interval_ms(self) -> int:
@@ -283,18 +344,15 @@ class FlappyBirdGame:
 
         # 충돌 판정
         if br.top <= CEILING_MARGIN:
-            self.game_over_reason = "천장에 부딪혔어요!"
-            self.state = "gameover"
+            self._enter_gameover("천장에 부딪혔어요!")
             return
         if br.bottom >= SCREEN_HEIGHT - GROUND_HEIGHT:
-            self.game_over_reason = "바닥에 떨어졌어요!"
-            self.state = "gameover"
+            self._enter_gameover("바닥에 떨어졌어요!")
             return
 
         for pipe in self.pipes:
             if br.colliderect(pipe.rect_top()) or br.colliderect(pipe.rect_bottom()):
-                self.game_over_reason = "뱀한테 먹혔어요!"
-                self.state = "gameover"
+                self._enter_gameover("뱀한테 먹혔어요!")
                 return
 
     # -------------------
@@ -546,10 +604,12 @@ class FlappyBirdGame:
 
                     if self.state == "gameover":
                         if event.key == pygame.K_r:
+                            self._resume_bgm()
                             self.state = "play"
                             self.reset_run()
                             continue
                         if event.key == pygame.K_RETURN:
+                            self._resume_bgm()
                             self.state = "title"
                             continue
 

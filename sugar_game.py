@@ -68,6 +68,9 @@ SNAP_TO_TARGET_PX = 4
 COM_MARGIN_PX = 6
 
 NEW_ASSET_DIR = Path(__file__).resolve().parent / "assets" / "new" / "04. game1_ssaaburi"
+MP3_ASSET_DIR = Path(__file__).resolve().parent / "assets" / "mp3"
+SFX_FILE = MP3_ASSET_DIR / "happy-pop-2-185287.mp3"
+SFX_GAMEOVER_FILE = MP3_ASSET_DIR / "negative_beeps-6008.mp3"
 FONT_DIR = Path(__file__).resolve().parent / "assets" / "fonts"
 NEODGM_FONT_FILE = FONT_DIR / "neodgm.ttf"
 
@@ -134,6 +137,13 @@ class SugarStackGame:
         self.font = get_font(22)
         self.font_small = get_font(18)
 
+        # SFX: 햄버거를 놓을 때마다 재생
+        self.sfx_pop: Optional[pygame.mixer.Sound] = None
+        # SFX: 게임오버 시 재생(+ BGM pause)
+        self.sfx_gameover: Optional[pygame.mixer.Sound] = None
+        self._bgm_paused_for_gameover = False
+        self._init_sfx()
+
         self.state: str = "title"  # title | howto | play | gameover
         self.running = True
 
@@ -157,6 +167,50 @@ class SugarStackGame:
         self.btn_back = pygame.Rect(26, 22, 110, 46)
 
         self.reset_game()
+
+    def _init_sfx(self) -> None:
+        try:
+            if pygame.mixer.get_init() is None:
+                pygame.mixer.init()
+            if SFX_FILE.exists():
+                sfx = pygame.mixer.Sound(SFX_FILE.as_posix())
+                sfx.set_volume(0.55)
+                self.sfx_pop = sfx
+            if SFX_GAMEOVER_FILE.exists():
+                sfx_go = pygame.mixer.Sound(SFX_GAMEOVER_FILE.as_posix())
+                sfx_go.set_volume(0.75)
+                self.sfx_gameover = sfx_go
+        except Exception:
+            self.sfx_pop = None
+            self.sfx_gameover = None
+
+    def _enter_gameover(self, reason: str) -> None:
+        """게임오버 진입: BGM을 멈추고(일시정지) 효과음을 1회 재생한다."""
+        self.game_over_reason = reason
+        if not self._bgm_paused_for_gameover:
+            try:
+                if pygame.mixer.get_init() is not None and pygame.mixer.music.get_busy():
+                    pygame.mixer.music.pause()
+            except Exception:
+                pass
+            if self.sfx_gameover is not None:
+                try:
+                    self.sfx_gameover.play()
+                except Exception:
+                    pass
+            self._bgm_paused_for_gameover = True
+        self.state = "gameover"
+
+    def _resume_bgm(self) -> None:
+        """게임 재개 시 BGM을 다시 재생한다."""
+        if not self._bgm_paused_for_gameover:
+            return
+        try:
+            if pygame.mixer.get_init() is not None:
+                pygame.mixer.music.unpause()
+        except Exception:
+            pass
+        self._bgm_paused_for_gameover = False
 
     def _load_assets(self) -> None:
         if not self.use_new_assets:
@@ -272,6 +326,11 @@ class SugarStackGame:
             return
         if self.held_cube.is_falling:
             return
+        if self.sfx_pop is not None:
+            try:
+                self.sfx_pop.play()
+            except Exception:
+                pass
         # 드롭 순간의 요정 위치를 고정해서 “요정은 가만히, 햄버거만 낙하” 연출을 만든다.
         self._fairy_frozen = True
         self._fairy_anchor_center_x = int(self.carrier_x) + CUBE_SIZE // 2
@@ -324,14 +383,12 @@ class SugarStackGame:
 
         overlap_ratio = self._compute_overlap_ratio(top, self.held_cube.rect)
         if overlap_ratio <= 0.0:
-            self.game_over_reason = "재료가 떨어졌어요!"
-            self.state = "gameover"
+            self._enter_gameover("재료가 떨어졌어요!")
             return
 
         if overlap_ratio < MIN_OVERLAP_RATIO_TO_PLACE:
             # 사실상 지지 불가 -> 즉시 붕괴(원작 감성: 너무 삐뚤면 바로 게임오버)
-            self.game_over_reason = "너무 삐뚤게 얹어서 무너졌어요!"
-            self.state = "gameover"
+            self._enter_gameover("너무 삐뚤게 얹어서 무너졌어요!")
             return
 
         # 정상 배치
@@ -349,7 +406,7 @@ class SugarStackGame:
 
         # COM이 베이스 밖이면 즉시 게임오버(필수 규칙 강화)
         if self._check_com_gameover():
-            self.state = "gameover"
+            self._enter_gameover(self.game_over_reason or "중심을 잃고 쓰러졌어요!")
             return
 
         # 다음 큐브 스폰
@@ -403,8 +460,7 @@ class SugarStackGame:
             self.tilt_deg = max(0.0, self.tilt_deg - 0.8 * dt)
 
         if self.tilt_deg >= TILT_THRESHOLD_DEG:
-            self.game_over_reason = "중심을 잃고 쓰러졌어요!"
-            self.state = "gameover"
+            self._enter_gameover("중심을 잃고 쓰러졌어요!")
             return
 
         # 보조 안전장치:
@@ -412,8 +468,7 @@ class SugarStackGame:
         # 따라서 "스택 블록이 화면 아래로 내려갔다"는 조건으로 게임오버를 내면 오작동한다.
         # 대신, 낙하 중인 블록이 화면 아래로 완전히 떨어져 나가는 경우만 실패로 처리한다.
         if self.held_cube.is_falling and self.held_cube.rect.top > int(self.camera_y + SCREEN_HEIGHT + 80):
-            self.game_over_reason = "재료가 떨어졌어요!"
-            self.state = "gameover"
+            self._enter_gameover("재료가 떨어졌어요!")
             return
 
         # 스택이 높아지면 카메라를 위로 올려 “항상 화면 하단 쪽에서 쌓이는” 느낌을 유지
@@ -596,9 +651,11 @@ class SugarStackGame:
                         self.handle_drop_input()
                     elif self.state == "gameover":
                         if event.key == pygame.K_r:
+                            self._resume_bgm()
                             self.state = "play"
                             self.reset_game()
                         elif event.key == pygame.K_RETURN:
+                            self._resume_bgm()
                             self.state = "title"
 
                 if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
@@ -616,6 +673,7 @@ class SugarStackGame:
                         self.handle_drop_input()
                     elif self.state == "gameover":
                         # 클릭으로도 빠른 재시작
+                        self._resume_bgm()
                         self.state = "play"
                         self.reset_game()
 

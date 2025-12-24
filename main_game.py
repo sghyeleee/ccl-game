@@ -29,6 +29,10 @@ ASSET_DIR = Path(__file__).resolve().parent / "assets" / "main_game"
 TITLE_ASSET_DIR = Path(__file__).resolve().parent / "assets" / "new" / "01.title"
 STORY_ASSET_DIR = Path(__file__).resolve().parent / "assets" / "new" / "02.story"
 MAIN_ASSET_DIR = Path(__file__).resolve().parent / "assets" / "new" / "03.main"
+MP3_ASSET_DIR = Path(__file__).resolve().parent / "assets" / "mp3"
+BGM_FILE = MP3_ASSET_DIR / "puzzle-game-bright-casual-video-game-music-249202.mp3"
+GAME_BGM_FILE = MP3_ASSET_DIR / "retro-game-arcade-236133.mp3"
+SFX_FILE = MP3_ASSET_DIR / "happy-pop-2-185287.mp3"
 FONT_DIR = Path(__file__).resolve().parent / "assets" / "fonts"
 VERSION_FILE = Path(__file__).resolve().parent / "VERSION"
 
@@ -201,12 +205,67 @@ class BuriBuriPartyApp:
         self._button_cache: dict[tuple[int, int, bool], pygame.Surface] = {}
         self._title_menu_button_rects: list[pygame.Rect] = []
         self.app_version = _read_app_version()
+        self._bgm_started = False
+        self._bgm_current: Optional[Path] = None
+        self._sfx_move: Optional[pygame.mixer.Sound] = None
 
         self._init_pygame()
+
+    def _init_sfx(self) -> None:
+        """짧은 UI 효과음을 로드한다(실패해도 게임은 계속 실행)."""
+        if self._sfx_move is not None:
+            return
+        if not SFX_FILE.exists():
+            self._sfx_move = None
+            return
+        try:
+            if pygame.mixer.get_init() is None:
+                pygame.mixer.init()
+            sfx = pygame.mixer.Sound(SFX_FILE.as_posix())
+            sfx.set_volume(0.55)
+            self._sfx_move = sfx
+        except Exception:
+            self._sfx_move = None
+
+    def _play_ui_move_sfx(self) -> None:
+        if self._sfx_move is None:
+            return
+        try:
+            self._sfx_move.play()
+        except Exception:
+            return
+
+    def _play_bgm(self, path: Path, *, volume: float = 0.35) -> None:
+        """지정된 mp3를 루프 재생한다(동일 트랙이면 재호출해도 무시)."""
+        if not path.exists():
+            return
+        try:
+            if pygame.mixer.get_init() is None:
+                pygame.mixer.init()
+            # 같은 트랙이 이미 재생 중이면 스킵
+            if self._bgm_current == path and pygame.mixer.music.get_busy():
+                self._bgm_started = True
+                return
+            pygame.mixer.music.load(path.as_posix())
+            pygame.mixer.music.set_volume(volume)
+            pygame.mixer.music.play(-1)  # loop
+            self._bgm_started = True
+            self._bgm_current = path
+        except Exception:
+            # 오디오 장치/코덱 문제 등으로 실패할 수 있으니 무시(폴백)
+            self._bgm_started = False
+
+    def _init_bgm(self) -> None:
+        """BGM을 1회만 초기화/재생한다(실패해도 게임은 계속 실행)."""
+        if self._bgm_started:
+            return
+        self._play_bgm(BGM_FILE, volume=0.35)
 
     def _init_pygame(self) -> None:
         """pygame 디스플레이와 폰트를 재구성한다."""
         pygame.init()
+        self._init_bgm()
+        self._init_sfx()
         pygame.display.set_caption("the buriburi party")
         self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
         self.clock = pygame.time.Clock()
@@ -310,6 +369,7 @@ class BuriBuriPartyApp:
     def _handle_title_event(self, event: pygame.event.Event) -> None:
         """타이틀 메뉴에서의 키 입력을 처리한다."""
         if event.type == pygame.KEYDOWN:
+            prev = self.menu_index
             if event.key in (pygame.K_DOWN, pygame.K_s):
                 self.menu_index = (self.menu_index + 1) % len(self.menu_items)
             elif event.key in (pygame.K_UP, pygame.K_w):
@@ -318,13 +378,17 @@ class BuriBuriPartyApp:
                 self._trigger_menu_action()
             elif event.key == pygame.K_ESCAPE:
                 self.running = False
+            if self.menu_index != prev:
+                self._play_ui_move_sfx()
             return
 
         # 마우스로도 메뉴 선택/실행 가능하도록 처리
         if event.type == pygame.MOUSEMOTION:
             hovered = self._hit_test_title_menu(event.pos)
             if hovered is not None:
-                self.menu_index = hovered
+                if hovered != self.menu_index:
+                    self.menu_index = hovered
+                    self._play_ui_move_sfx()
         elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             hovered = self._hit_test_title_menu(event.pos)
             if hovered is not None:
@@ -381,6 +445,8 @@ class BuriBuriPartyApp:
 
     def _advance_story_on_confirm(self) -> None:
         """스토리에서 확인 입력(클릭/Enter) 시의 동작을 처리한다."""
+        # 스토리 확인 입력(클릭/Enter) 시 효과음
+        self._play_ui_move_sfx()
         scene = self.story_scenes[self.story_scene_index]
         if self.story_char_index < len(scene):
             self.story_char_index = len(scene)
@@ -429,6 +495,7 @@ class BuriBuriPartyApp:
         """메인 허브 화면에서의 입력을 처리한다."""
         total = min(len(self.games), 3)
         if event.type == pygame.KEYDOWN:
+            prev = self.hovered_card_idx
             if event.key == pygame.K_ESCAPE:
                 self.state = "title"
             elif event.key in (pygame.K_LEFT, pygame.K_a):
@@ -440,10 +507,14 @@ class BuriBuriPartyApp:
             elif event.key in (pygame.K_RETURN, pygame.K_SPACE):
                 idx = self.hovered_card_idx if self.hovered_card_idx is not None else 0
                 self._launch_game(idx)
+            if self.hovered_card_idx != prev and event.key in (pygame.K_LEFT, pygame.K_a, pygame.K_RIGHT, pygame.K_d):
+                self._play_ui_move_sfx()
         elif event.type == pygame.MOUSEMOTION:
             idx = self._get_game_icon_at(event.pos)
             if idx is not None:
-                self.hovered_card_idx = idx
+                if idx != self.hovered_card_idx:
+                    self.hovered_card_idx = idx
+                    self._play_ui_move_sfx()
         elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             idx = self._get_game_icon_at(event.pos)
             if idx is not None:
@@ -478,7 +549,11 @@ class BuriBuriPartyApp:
         """선택된 미니게임을 실행한다."""
         game_entry = self.games[game_index]
         # pygame.display.quit() 제거 - display 공유 방식으로 변경
+        # 미니게임 실행 중에는 다른 BGM으로 전환
+        self._play_bgm(GAME_BGM_FILE, volume=0.35)
         game_entry.start_fn()
+        # 런처로 복귀하면 런처 BGM으로 되돌림
+        self._play_bgm(BGM_FILE, volume=0.35)
         # 미니게임이 display 모드/서피스를 바꿀 수 있으니, 복귀 후 현재 서피스로 동기화한다.
         current_surface = pygame.display.get_surface()
         if current_surface is not None:

@@ -29,6 +29,9 @@ SPEED_INCREMENT = 0.15
 GRID_OVERLAY_ALPHA = 40  # 0이면 격자 완전 제거, 숫자가 클수록 진해짐
 ASSET_DIR = Path(__file__).resolve().parent / "assets" / "snake_survival"
 NEW_ASSET_DIR = Path(__file__).resolve().parent / "assets" / "new" / "06.game3_dolyuburi"
+MP3_ASSET_DIR = Path(__file__).resolve().parent / "assets" / "mp3"
+SFX_FILE = MP3_ASSET_DIR / "happy-pop-2-185287.mp3"
+SFX_GAMEOVER_FILE = MP3_ASSET_DIR / "negative_beeps-6008.mp3"
 FONT_FILE = ASSET_DIR / "Pretendard-Regular.ttf"
 FONT_DIR = Path(__file__).resolve().parent / "assets" / "fonts"
 NEODGM_FONT_FILE = FONT_DIR / "neodgm.ttf"
@@ -449,6 +452,26 @@ def run_game(*, quit_on_exit: bool = True) -> None:
     font = load_game_font(22)
     font_small = load_game_font(18)
     assets = load_assets()
+    # SFX: 친구를 구출(먹기)할 때마다 재생
+    sfx_pop: Optional[pygame.mixer.Sound] = None
+    # SFX: 게임오버 시 재생(+ BGM pause)
+    sfx_gameover: Optional[pygame.mixer.Sound] = None
+    if SFX_FILE.exists():
+        try:
+            if pygame.mixer.get_init() is None:
+                pygame.mixer.init()
+            sfx_pop = pygame.mixer.Sound(SFX_FILE.as_posix())
+            sfx_pop.set_volume(0.55)
+        except Exception:
+            sfx_pop = None
+    if SFX_GAMEOVER_FILE.exists():
+        try:
+            if pygame.mixer.get_init() is None:
+                pygame.mixer.init()
+            sfx_gameover = pygame.mixer.Sound(SFX_GAMEOVER_FILE.as_posix())
+            sfx_gameover.set_volume(0.75)
+        except Exception:
+            sfx_gameover = None
 
     def draw_card(surface: pygame.Surface, rect: pygame.Rect) -> None:
         pygame.draw.rect(surface, (255, 255, 255), rect, border_radius=18)
@@ -487,8 +510,15 @@ def run_game(*, quit_on_exit: bool = True) -> None:
         score = 1
         game_over = False
         sparks.clear()
+        # 재개 시 BGM 다시 켜기
+        try:
+            if pygame.mixer.get_init() is not None:
+                pygame.mixer.music.unpause()
+        except Exception:
+            pass
 
     running = True
+    prev_game_over = False
     while running:
         delta_ms = clock.tick(60)
         delta_time = delta_ms / 1000
@@ -521,8 +551,16 @@ def run_game(*, quit_on_exit: bool = True) -> None:
                 if game_over:
                     if event.key == pygame.K_r:
                         reset_play()
+                        prev_game_over = False
                     elif event.key == pygame.K_RETURN:
                         mode = "title"
+                        # 타이틀로 돌아갈 때 BGM 다시 켜기
+                        try:
+                            if pygame.mixer.get_init() is not None:
+                                pygame.mixer.music.unpause()
+                        except Exception:
+                            pass
+                        prev_game_over = False
                     continue
                 if mode == "play" and not game_over:
                     if event.key in (pygame.K_UP, pygame.K_w):
@@ -569,6 +607,11 @@ def run_game(*, quit_on_exit: bool = True) -> None:
                     if new_head == friend_pos:
                         score += 1
                         moves_per_second += SPEED_INCREMENT
+                        if sfx_pop is not None:
+                            try:
+                                sfx_pop.play()
+                            except Exception:
+                                pass
                         # 구출한 친구의 head가 등 뒤(꼬리 세그먼트)로 붙는다.
                         friend_kinds.append(friend_kind)
                         friend_pos, friend_kind = spawn_food(snake, len(assets.food_frames))
@@ -579,6 +622,20 @@ def run_game(*, quit_on_exit: bool = True) -> None:
                         sparks.append(SparkEffect(center=center))
                     else:
                         snake.pop()
+
+        # 게임오버 "진입 순간"에만: BGM pause + 부저음 1회
+        if mode == "play" and game_over and not prev_game_over:
+            try:
+                if pygame.mixer.get_init() is not None and pygame.mixer.music.get_busy():
+                    pygame.mixer.music.pause()
+            except Exception:
+                pass
+            if sfx_gameover is not None:
+                try:
+                    sfx_gameover.play()
+                except Exception:
+                    pass
+        prev_game_over = (mode == "play") and game_over
 
         if mode == "title":
             draw_background(screen, assets.background_tile, assets.grid_overlay)
