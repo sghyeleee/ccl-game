@@ -5,9 +5,11 @@
 
 from __future__ import annotations
 
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import pygame
+
+from firebase.score_repository import get_leaderboard, get_high_score
 
 # 색상 상수
 MAIN_BG = (245, 245, 247)
@@ -23,46 +25,30 @@ GAMES = [
     ("snake_survival", "모아부리"),
 ]
 
-# 더미 데이터 (나중에 Firebase 연동 시 교체)
-DUMMY_SCORES = {
-    "flappy_bird": [
-        ("부리킹", 999),
-        ("햄버거왕", 850),
-        ("치킨마스터", 720),
-        ("피자러버", 650),
-        ("스네이크", 580),
-        ("점프맨", 510),
-        ("플라이어", 450),
-        ("버거보이", 380),
-    ],
-    "sugar_game": [
-        ("슈가러시", 1200),
-        ("달콤이", 1100),
-        ("케이크장인", 950),
-        ("캔디킹", 800),
-        ("초코파이", 720),
-        ("사탕왕", 650),
-        ("마카롱", 580),
-        ("도넛맨", 500),
-    ],
-    "snake_survival": [
-        ("뱀술사", 1500),
-        ("서바이버", 1350),
-        ("생존왕", 1200),
-        ("모아모아", 1050),
-        ("친구수집가", 900),
-        ("구출대장", 780),
-        ("헬퍼", 650),
-        ("레스큐", 520),
-    ],
-}
 
-# 내 더미 점수 (실제 연동 시 Firebase에서 조회)
-DUMMY_MY_SCORES = {
-    "flappy_bird": 320,
-    "sugar_game": 480,
-    "snake_survival": 420,
-}
+def fetch_leaderboard_data(game_id: str, nickname: str, limit: int = 10) -> Tuple[List[Tuple[str, int]], int]:
+    """Firebase에서 리더보드 데이터와 내 점수를 가져온다.
+    
+    Args:
+        game_id: 게임 ID
+        nickname: 현재 유저 닉네임
+        limit: 가져올 랭킹 수
+        
+    Returns:
+        (랭킹 리스트, 내 점수) 튜플
+    """
+    try:
+        # 리더보드 조회
+        leaderboard_data = get_leaderboard(game_id, limit=limit)
+        scores = [(item["nickname"], item["score"]) for item in leaderboard_data]
+        
+        # 내 점수 조회
+        my_score = get_high_score(nickname, game_id) if nickname else 0
+        
+        return scores, my_score
+    except Exception as e:
+        print(f"[DEBUG] 리더보드 조회 실패: {e}")
+        return [], 0
 
 
 def run_leaderboard(
@@ -90,12 +76,17 @@ def run_leaderboard(
     
     # 현재 선택된 게임 인덱스
     selected_game_idx = 0
+    prev_game_idx = -1  # 이전 게임 인덱스 (데이터 갱신 체크용)
     
     # 게임 탭 버튼 rect 저장
     tab_rects: List[pygame.Rect] = []
     
     # 표시할 최대 랭킹 수
     max_display_ranks = 5
+    
+    # 캐시된 데이터 (탭 변경 시에만 갱신)
+    cached_scores: List[Tuple[str, int]] = []
+    cached_my_score: int = 0
     
     while running:
         for event in pygame.event.get():
@@ -156,10 +147,18 @@ def run_leaderboard(
             
             screen.blit(bubble_text, bubble_text.get_rect(center=bubble_rect.center))
         
-        # === 랭킹 데이터 준비 ===
+        # === 랭킹 데이터 준비 (탭 변경 시에만 Firebase 조회) ===
         current_game_id = GAMES[selected_game_idx][0]
-        scores = DUMMY_SCORES.get(current_game_id, [])
-        my_score = DUMMY_MY_SCORES.get(current_game_id, 0)
+        
+        if selected_game_idx != prev_game_idx:
+            # 탭이 변경되었으면 Firebase에서 새로 조회
+            cached_scores, cached_my_score = fetch_leaderboard_data(
+                current_game_id, nickname, limit=max_display_ranks + 5
+            )
+            prev_game_idx = selected_game_idx
+        
+        scores = cached_scores
+        my_score = cached_my_score
         
         # 내 등수 계산
         my_rank = len(scores) + 1  # 기본값: 리스트 끝
@@ -167,8 +166,11 @@ def run_leaderboard(
             if my_score > score:
                 my_rank = i + 1
                 break
-            elif my_score == score:
-                my_rank = i + 2  # 동점이면 뒤 순위
+            elif my_score == score and name != nickname:
+                continue  # 동점인 다른 사람은 건너뜀
+            elif name == nickname:
+                my_rank = i + 1  # 내가 리스트에 있으면 해당 등수
+                break
         
         # === 오른쪽 상단: 내 점수 표시 ===
         my_box_w = 180
