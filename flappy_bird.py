@@ -205,19 +205,14 @@ class FlappyBirdGame:
     def _save_score_to_db(self) -> None:
         """닉네임이 있으면 점수를 DB에 저장한다 (최고 점수일 때만 갱신)."""
         if self._score_saved:
-            print(f"[DEBUG] 이미 저장됨, 스킵")
             return
         if not self.nickname:
-            print(f"[DEBUG] 닉네임 없음, 스킵")
             return
         try:
-            print(f"[DEBUG] 점수 저장 시도: nickname={self.nickname}, game={self.GAME_NAME}, score={self.score}")
             result = save_high_score(self.nickname, self.GAME_NAME, self.score)
-            print(f"[DEBUG] 점수 저장 결과: {result}")
             self._score_saved = True
         except Exception as e:
             # DB 저장 실패해도 게임은 계속 진행
-            print(f"[DEBUG] 점수 저장 실패: {e}")
             import traceback
             traceback.print_exc()
 

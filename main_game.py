@@ -651,9 +651,9 @@ class BuriBuriPartyApp:
         if game_index == 0:  # 날아부리 (flappy_bird)
             run_flappy_bird(quit_on_exit=False, nickname=self.nickname)
         elif game_index == 1:  # 쌓아부리 (sugar_game)
-            run_sugar_game(quit_on_exit=False)
+            run_sugar_game(quit_on_exit=False, nickname=self.nickname)
         elif game_index == 2:  # 모아부리 (snake_survival)
-            run_snake(quit_on_exit=False)
+            run_snake(quit_on_exit=False, nickname=self.nickname)
         else:
             game_entry.start_fn()
         

@@ -8,6 +8,7 @@ from typing import Optional, Tuple
 import pygame
 
 from ui_common import draw_game_over_ui
+from firebase.score_repository import save_high_score
 
 # =========================
 # 기본 설정
@@ -126,7 +127,9 @@ class Cube:
 
 
 class SugarStackGame:
-    def __init__(self) -> None:
+    GAME_NAME = "sugar_game"  # DB 저장용 게임 식별자
+
+    def __init__(self, nickname: str = "") -> None:
         pygame.init()
         pygame.display.set_caption("쌓아부리")
         self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
@@ -142,6 +145,8 @@ class SugarStackGame:
         # SFX: 게임오버 시 재생(+ BGM pause)
         self.sfx_gameover: Optional[pygame.mixer.Sound] = None
         self._bgm_paused_for_gameover = False
+        self.nickname = nickname  # 점수 저장용 닉네임
+        self._score_saved = False  # 점수 저장 여부 (중복 저장 방지)
         self._init_sfx()
 
         self.state: str = "title"  # title | howto | play | gameover
@@ -199,7 +204,22 @@ class SugarStackGame:
                 except Exception:
                     pass
             self._bgm_paused_for_gameover = True
+        # 점수 저장 (닉네임이 있고 아직 저장하지 않은 경우)
+        self._save_score_to_db()
         self.state = "gameover"
+
+    def _save_score_to_db(self) -> None:
+        """닉네임이 있으면 점수를 DB에 저장한다 (최고 점수일 때만 갱신)."""
+        if self._score_saved:
+            return
+        if not self.nickname:
+            return
+        try:
+            save_high_score(self.nickname, self.GAME_NAME, self.score)
+            self._score_saved = True
+        except Exception as e:
+            # DB 저장 실패해도 게임은 계속 진행
+            print(f"[DEBUG] 점수 저장 실패: {e}")
 
     def _resume_bgm(self) -> None:
         """게임 재개 시 BGM을 다시 재생한다."""
@@ -272,6 +292,7 @@ class SugarStackGame:
 
         self.level = 1
         self.score = 1  # 첫 큐브를 1층으로 취급
+        self._score_saved = False  # 점수 저장 플래그 초기화
 
         # 불안정/기울기(세미-물리)
         self.instability = 0.0
@@ -695,8 +716,8 @@ class SugarStackGame:
             pygame.quit()
 
 
-def run_game(*, quit_on_exit: bool = True) -> None:
-    SugarStackGame().run(quit_on_exit=quit_on_exit)
+def run_game(*, quit_on_exit: bool = True, nickname: str = "") -> None:
+    SugarStackGame(nickname=nickname).run(quit_on_exit=quit_on_exit)
 
 
 if __name__ == "__main__":

@@ -9,6 +9,7 @@ from typing import Deque, Dict, List, Optional, Tuple
 import pygame
 
 from ui_common import draw_game_over_ui
+from firebase.score_repository import save_high_score
 
 # 요청: 캐릭터/음식 등을 더 크게 보이게(20x20 → 30x30 느낌)
 # 화면(800x540, HUD 60)을 벗어나지 않도록 그리드 크기도 함께 조정한다.
@@ -442,7 +443,9 @@ def load_game_font(size: int) -> pygame.font.Font:
     return pygame.font.Font(None, size)
 
 
-def run_game(*, quit_on_exit: bool = True) -> None:
+GAME_NAME = "snake_survival"  # DB 저장용 게임 식별자
+
+def run_game(*, quit_on_exit: bool = True, nickname: str = "") -> None:
     """Run the endless snake survival mini-game."""
     pygame.init()
     pygame.display.set_caption("모아부리")
@@ -497,9 +500,10 @@ def run_game(*, quit_on_exit: bool = True) -> None:
     score = 1
     game_over = False
     sparks: List[SparkEffect] = []
+    score_saved = False  # 점수 저장 여부 (중복 저장 방지)
 
     def reset_play() -> None:
-        nonlocal snake, current_direction, friend_pos, friend_kind, move_timer, moves_per_second, score, game_over
+        nonlocal snake, current_direction, friend_pos, friend_kind, move_timer, moves_per_second, score, game_over, score_saved
         snake = [(GRID_WIDTH // 2, GRID_HEIGHT // 2)]
         friend_kinds.clear()
         current_direction = (1, 0)
@@ -509,6 +513,7 @@ def run_game(*, quit_on_exit: bool = True) -> None:
         moves_per_second = INITIAL_SPEED
         score = 1
         game_over = False
+        score_saved = False
         sparks.clear()
         # 재개 시 BGM 다시 켜기
         try:
@@ -602,6 +607,14 @@ def run_game(*, quit_on_exit: bool = True) -> None:
                     or new_head in snake
                 ):
                     game_over = True
+                    # 점수 저장 (닉네임이 있고 아직 저장하지 않은 경우)
+                    if not score_saved and nickname:
+                        try:
+                            save_high_score(nickname, GAME_NAME, score)
+                            score_saved = True
+                        except Exception as e:
+                            # DB 저장 실패해도 게임은 계속 진행
+                            print(f"[DEBUG] 점수 저장 실패: {e}")
                 else:
                     snake.insert(0, new_head)
                     if new_head == friend_pos:
