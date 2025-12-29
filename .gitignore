@@ -35,6 +35,7 @@ Thumbs.db
 # =========================
 firebase_key.json
 .env
+firebase/config.py
 
 # =========================
 # Game / Runtime artifacts
