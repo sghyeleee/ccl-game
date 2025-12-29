@@ -200,6 +200,15 @@ class BuriBuriPartyApp:
         self.status_message: Optional[str] = None
         self.status_until_ms = 0
 
+        # 닉네임 입력 관련 상태
+        self.nickname: str = ""
+        self.nickname_input: str = ""  # 확정된 텍스트
+        self.nickname_composing: str = ""  # 조합 중인 텍스트 (한글 IME)
+        self.nickname_confirmed: bool = False
+        self.nickname_input_focused: bool = False
+        self._nickname_input_box_rect: Optional[pygame.Rect] = None
+        self._nickname_confirm_btn_rect: Optional[pygame.Rect] = None
+
         self.assets: dict[str, pygame.Surface] = {}
         self._button_cache: dict[tuple[int, int, bool], pygame.Surface] = {}
         self._title_menu_button_rects: list[pygame.Rect] = []
@@ -358,6 +367,8 @@ class BuriBuriPartyApp:
             self._handle_title_event(event)
         elif self.state == "story":
             self._handle_story_event(event)
+        elif self.state == "nickname":
+            self._handle_nickname_event(event)
         elif self.state == "characters":
             self._handle_character_event(event)
         elif self.state == "hub":
@@ -410,8 +421,8 @@ class BuriBuriPartyApp:
             self.running = False
 
     def _start_game(self) -> None:
-        """'게임 시작하기' 선택 시: 저장된 캐릭터가 있으면 허브로, 없으면 스토리부터 시작한다."""
-        if self.has_started:
+        """'게임 시작하기' 선택 시: 닉네임이 등록되어 있으면 허브로, 없으면 스토리부터 시작한다."""
+        if self.nickname_confirmed and self.nickname:
             self.state = "hub"
         else:
             self._start_new_play()
@@ -456,8 +467,8 @@ class BuriBuriPartyApp:
             self.story_char_index = 0
             self.story_char_accum = 0.0
             return
-        self.has_started = True
-        self.state = "hub"
+        # 스토리 끝 → 닉네임 입력 화면으로 이동
+        self._enter_nickname_screen()
 
     def _go_to_character_select(self) -> None:
         """스토리 종료 후 캐릭터 선택으로 전환한다."""
@@ -465,6 +476,91 @@ class BuriBuriPartyApp:
         self.has_started = True
         self.state = "hub"
         self.story_start_ms = None
+
+    def _handle_nickname_event(self, event: pygame.event.Event) -> None:
+        """닉네임 입력 화면에서의 입력을 처리한다.
+        
+        한글 IME 처리 참고: 
+        - https://fireing123.tistory.com/entry/pygame-입력-필드-만들기
+        - https://github.com/fireing123/pygamefwk/blob/main/pygamefwk/objects/ui/inputfield.py
+        """
+        # 마우스 클릭: 입력창 또는 확인 버튼
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            pos = event.pos
+            # 입력창 클릭 시 포커스 활성화
+            if self._nickname_input_box_rect and self._nickname_input_box_rect.collidepoint(pos):
+                if not self.nickname_input_focused:
+                    self.nickname_input_focused = True
+                    pygame.key.start_text_input()
+                    self._play_ui_move_sfx()
+            # 확인 버튼 클릭
+            elif self._nickname_confirm_btn_rect and self._nickname_confirm_btn_rect.collidepoint(pos):
+                if (self.nickname_input + self.nickname_composing).strip():
+                    self._confirm_nickname()
+            else:
+                # 다른 곳 클릭 시 포커스 해제
+                if self.nickname_input_focused:
+                    self.nickname_input_focused = False
+                    pygame.key.stop_text_input()
+            return
+
+        # 텍스트 조합 중 (한글 IME - 자음/모음 조합 중)
+        if event.type == pygame.TEXTEDITING:
+            # 글자 제한 체크
+            if len(self.nickname_input) < 8:
+                self.nickname_composing = event.text
+            else:
+                # 제한 도달 시 IME 끄기
+                pygame.key.stop_text_input()
+            return
+
+        # 텍스트 입력 확정 (한글 IME 지원)
+        if event.type == pygame.TEXTINPUT:
+            # 먼저 조합 텍스트 초기화
+            self.nickname_composing = ""
+            # 글자 제한 체크 후 삽입
+            if len(self.nickname_input) < 8:
+                self.nickname_input += event.text
+                self._play_ui_move_sfx()
+            return
+
+        # 특수 키 처리 (KEYDOWN)
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_RETURN:
+                # Enter: 닉네임 확정
+                if (self.nickname_input + self.nickname_composing).strip():
+                    self._confirm_nickname()
+            elif event.key == pygame.K_BACKSPACE:
+                # 조합 중일 때는 IME가 처리하도록 둠 (TEXTEDITING으로 업데이트됨)
+                # 조합 중이 아닐 때만 확정된 텍스트에서 삭제
+                if not self.nickname_composing:
+                    if len(self.nickname_input) > 0:
+                        self.nickname_input = self.nickname_input[:-1]
+            elif event.key == pygame.K_ESCAPE:
+                # ESC: 타이틀로 돌아가기
+                pygame.key.stop_text_input()
+                self.nickname_composing = ""
+                self.state = "title"
+
+    def _enter_nickname_screen(self) -> None:
+        """닉네임 입력 화면으로 진입한다."""
+        self.nickname_input = ""
+        self.nickname_composing = ""
+        self.nickname_input_focused = True
+        pygame.key.start_text_input()  # IME 활성화
+        self.state = "nickname"
+
+    def _confirm_nickname(self) -> None:
+        """닉네임을 확정하고 허브 화면으로 이동한다."""
+        # 조합 중인 글자도 포함해서 저장
+        self.nickname = (self.nickname_input + self.nickname_composing).strip()
+        self.nickname_input = self.nickname  # 동기화
+        self.nickname_composing = ""  # 조합 중인 텍스트 초기화
+        self.nickname_confirmed = True
+        self.has_started = True
+        self._play_ui_move_sfx()
+        pygame.key.stop_text_input()  # IME 비활성화
+        self.state = "hub"
 
     def _handle_character_event(self, event: pygame.event.Event) -> None:
         """캐릭터 선택 화면 입력을 처리한다."""
@@ -582,6 +678,8 @@ class BuriBuriPartyApp:
             self._draw_title_screen()
         elif self.state == "story":
             self._draw_story_screen()
+        elif self.state == "nickname":
+            self._draw_nickname_screen()
         elif self.state == "characters":
             self._draw_character_screen()
         elif self.state == "hub":
@@ -685,6 +783,140 @@ class BuriBuriPartyApp:
 
         page = self.font_micro.render(f"{self.story_scene_index + 1} / {len(self.story_scenes)}", True, INACTIVE_TEXT)
         self.screen.blit(page, (SCREEN_WIDTH - page.get_width() - 40, SCREEN_HEIGHT - 60))
+
+    def _draw_nickname_screen(self) -> None:
+        """닉네임 입력 화면을 렌더링한다 (게임 선택 화면과 유사한 레이아웃)."""
+        self.screen.fill(MAIN_BG)
+
+        # 상단 타이틀
+        title = self.font_medium.render("요원 등록", True, ACCENT)
+        self.screen.blit(title, title.get_rect(center=(SCREEN_WIDTH // 2, 82)))
+
+        helper = self.font_micro.render("부리부리 행성에서 온 당신의 이름을 입력하세요", True, INACTIVE_TEXT)
+        self.screen.blit(helper, helper.get_rect(center=(SCREEN_WIDTH // 2, 112)))
+
+        # 디폴트 캐릭터(장식용) - 게임 선택 화면과 동일
+        char = self.assets.get("char_default")
+        if char:
+            char_s = pygame.transform.smoothscale(char, (84, 84))
+            char_pos = (40, 46)
+            self.screen.blit(char_s, char_pos)
+
+            # 말풍선
+            bubble_w, bubble_h = 160, 52
+            bubble_x = char_pos[0] + 84 + 6
+            bubble_y = char_pos[1] - 2
+            bubble_rect = pygame.Rect(bubble_x, bubble_y, bubble_w, bubble_h)
+
+            # 그림자
+            shadow_rect = bubble_rect.move(3, 3)
+            pygame.draw.rect(self.screen, (0, 0, 0, 40), shadow_rect, border_radius=16)
+
+            # 본체
+            pygame.draw.rect(self.screen, (255, 255, 255), bubble_rect, border_radius=16)
+            pygame.draw.rect(self.screen, (30, 30, 30), bubble_rect, width=2, border_radius=16)
+
+            bubble_text = self.font_small.render("이름이 뭐야?", True, ACCENT)
+            self.screen.blit(bubble_text, bubble_text.get_rect(center=bubble_rect.center))
+
+        # 닉네임 입력 박스 (중앙에 크게)
+        input_box_w, input_box_h = 400, 70
+        input_box_x = (SCREEN_WIDTH - input_box_w) // 2
+        input_box_y = 200
+        input_box_rect = pygame.Rect(input_box_x, input_box_y, input_box_w, input_box_h)
+        self._nickname_input_box_rect = input_box_rect
+
+        # 입력 박스 배경 (포커스 시 테두리 색상 변경)
+        pygame.draw.rect(self.screen, (255, 255, 255), input_box_rect, border_radius=12)
+        border_color = (50, 120, 200) if self.nickname_input_focused else ACCENT
+        border_width = 4 if self.nickname_input_focused else 3
+        pygame.draw.rect(self.screen, border_color, input_box_rect, width=border_width, border_radius=12)
+
+        # 입력 텍스트 또는 플레이스홀더
+        # 확정된 텍스트 + 조합 중인 텍스트를 합쳐서 표시
+        display_text = self.nickname_input + self.nickname_composing
+        
+        base_x = input_box_rect.x + 20
+        text_y = input_box_rect.centery
+        
+        if display_text:
+            # 전체 텍스트를 한 번에 렌더링
+            full_text_surf = self.font_medium.render(display_text, True, ACCENT)
+            self.screen.blit(full_text_surf, (base_x, text_y - full_text_surf.get_height() // 2))
+            
+            # 조합 중인 텍스트가 있으면 밑줄 표시
+            if self.nickname_composing:
+                # 확정된 텍스트의 너비 계산
+                confirmed_width = 0
+                if self.nickname_input:
+                    confirmed_width = self.font_medium.size(self.nickname_input)[0]
+                # 조합 중인 텍스트의 너비 계산
+                composing_width = self.font_medium.size(self.nickname_composing)[0]
+                # 밑줄 그리기
+                underline_x = base_x + confirmed_width
+                underline_y = text_y + full_text_surf.get_height() // 2 - 2
+                pygame.draw.line(
+                    self.screen, ACCENT,
+                    (underline_x, underline_y),
+                    (underline_x + composing_width, underline_y),
+                    width=2
+                )
+        else:
+            # 포커스 상태일 때는 플레이스홀더 숨김
+            if not self.nickname_input_focused:
+                placeholder_surf = self.font_medium.render("클릭해서 입력...", True, INACTIVE_TEXT)
+                self.screen.blit(placeholder_surf, (base_x, text_y - placeholder_surf.get_height() // 2))
+
+        # 깜빡이는 커서 (포커스 상태이고 조합 중이 아닐 때만 표시)
+        # 조합 중일 때는 밑줄이 이미 표시되므로 커서는 숨김
+        if self.nickname_input_focused and not self.nickname_composing:
+            # 깜빡임 효과 (500ms 간격)
+            if (pygame.time.get_ticks() // 500) % 2 == 0:
+                # 커서 위치: 기본 위치 + 확정된 텍스트 너비
+                cursor_x = base_x
+                if self.nickname_input:
+                    cursor_x += self.font_medium.size(self.nickname_input)[0]
+                cursor_x += 2
+                cursor_y = input_box_rect.centery
+                pygame.draw.line(
+                    self.screen, ACCENT,
+                    (cursor_x, cursor_y - 18),
+                    (cursor_x, cursor_y + 18),
+                    width=2
+                )
+
+        # 확인 버튼
+        button_w, button_h = 200, 50
+        button_rect = pygame.Rect(
+            (SCREEN_WIDTH - button_w) // 2,
+            input_box_rect.bottom + 40,
+            button_w,
+            button_h
+        )
+        self._nickname_confirm_btn_rect = button_rect
+
+        can_confirm = bool((self.nickname_input + self.nickname_composing).strip())
+        button_color = ACCENT if can_confirm else INACTIVE_TEXT
+        button_text_color = (255, 255, 255) if can_confirm else (200, 200, 200)
+
+        pygame.draw.rect(self.screen, button_color, button_rect, border_radius=10)
+        button_label = self.font_small.render("확인 (Enter)", True, button_text_color)
+        self.screen.blit(button_label, button_label.get_rect(center=button_rect.center))
+
+        # 안내 문구
+        guide_lines = [
+            "• 닉네임은 1~8자까지 입력 가능합니다",
+            "• 게임 점수는 닉네임별로 저장됩니다",
+        ]
+        guide_y = button_rect.bottom + 50
+        for line in guide_lines:
+            line_surf = self.font_micro.render(line, True, INACTIVE_TEXT)
+            self.screen.blit(line_surf, line_surf.get_rect(center=(SCREEN_WIDTH // 2, guide_y)))
+            guide_y += 28
+
+        # 하단 푸터
+        footer = self.font_micro.render(f"ESC: 타이틀로  |  v{self.app_version}", True, INACTIVE_TEXT)
+        self.screen.blit(footer, (40, SCREEN_HEIGHT - 50))
 
     def _wrap_text(self, text: str, font: pygame.font.Font, max_width: int) -> list[str]:
         """지정 폭 안에 들어오도록 텍스트를 줄바꿈한다(한글 포함 안전)."""
@@ -798,10 +1030,19 @@ class BuriBuriPartyApp:
             self.screen.blit(char_s, char_pos)
 
             # 말풍선(캐릭터가 덩그러니 서 있는 느낌 완화)
-            # 말풍선은 너무 길지 않게, 그리고 캐릭터 바로 옆에 붙게 조정
-            bubble_w, bubble_h = 140, 52
+            # 닉네임이 있으면 환영 메시지, 없으면 기본 메시지
+            if self.nickname:
+                bubble_msg = f"{self.nickname}!"
+            else:
+                bubble_msg = "뭐하지?"
+            
+            # 말풍선 너비를 텍스트 길이에 맞게 동적 조정
+            bubble_text = self.font_small.render(bubble_msg, True, ACCENT)
+            text_width = bubble_text.get_width()
+            bubble_w = max(100, text_width + 40)  # 최소 100, 텍스트 + 여백
+            bubble_h = 52
+            
             bubble_x = char_pos[0] + 84 + 6
-            # 살짝 위로 올려서 타이틀과 겹치지 않게
             bubble_y = char_pos[1] - 2
             bubble_rect = pygame.Rect(bubble_x, bubble_y, bubble_w, bubble_h)
 
@@ -813,7 +1054,6 @@ class BuriBuriPartyApp:
             pygame.draw.rect(self.screen, (255, 255, 255), bubble_rect, border_radius=16)
             pygame.draw.rect(self.screen, (30, 30, 30), bubble_rect, width=2, border_radius=16)
 
-            bubble_text = self.font_small.render("뭐하지?", True, ACCENT)
             self.screen.blit(bubble_text, bubble_text.get_rect(center=bubble_rect.center))
 
         icon_keys = ["icon_flappy", "icon_sugar", "icon_snake"]
