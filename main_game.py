@@ -646,7 +646,17 @@ class BuriBuriPartyApp:
         # pygame.display.quit() 제거 - display 공유 방식으로 변경
         # 미니게임 실행 중에는 다른 BGM으로 전환
         self._play_bgm(GAME_BGM_FILE, volume=0.35)
-        game_entry.start_fn()
+        
+        # 게임별로 닉네임 전달 (점수 저장용)
+        if game_index == 0:  # 날아부리 (flappy_bird)
+            run_flappy_bird(quit_on_exit=False, nickname=self.nickname)
+        elif game_index == 1:  # 쌓아부리 (sugar_game)
+            run_sugar_game(quit_on_exit=False)
+        elif game_index == 2:  # 모아부리 (snake_survival)
+            run_snake(quit_on_exit=False)
+        else:
+            game_entry.start_fn()
+        
         # 런처로 복귀하면 런처 BGM으로 되돌림
         self._play_bgm(BGM_FILE, volume=0.35)
         # 미니게임이 display 모드/서피스를 바꿀 수 있으니, 복귀 후 현재 서피스로 동기화한다.
