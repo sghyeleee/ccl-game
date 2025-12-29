@@ -10,6 +10,7 @@ import pygame
 from snake_survival import run_game as run_snake
 from sugar_game import run_game as run_sugar_game
 from flappy_bird import run_game as run_flappy_bird
+from leaderboard import run_leaderboard
 
 SCREEN_WIDTH = 800
 SCREEN_HEIGHT = 540
@@ -212,6 +213,7 @@ class BuriBuriPartyApp:
         self.assets: dict[str, pygame.Surface] = {}
         self._button_cache: dict[tuple[int, int, bool], pygame.Surface] = {}
         self._title_menu_button_rects: list[pygame.Rect] = []
+        self._ranking_button_rect: Optional[pygame.Rect] = None
         self.app_version = _read_app_version()
         self._bgm_started = False
         self._bgm_current: Optional[Path] = None
@@ -611,10 +613,27 @@ class BuriBuriPartyApp:
                     self.hovered_card_idx = idx
                     self._play_ui_move_sfx()
         elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            # 랭킹 버튼 클릭 체크
+            if self._ranking_button_rect and self._ranking_button_rect.collidepoint(event.pos):
+                self._play_ui_move_sfx()
+                self._open_leaderboard()
+                return
             idx = self._get_game_icon_at(event.pos)
             if idx is not None:
                 self.hovered_card_idx = idx
                 self._launch_game(idx)
+
+    def _open_leaderboard(self) -> None:
+        """리더보드 화면을 연다."""
+        run_leaderboard(
+            screen=self.screen,
+            nickname=self.nickname,
+            font_medium=self.font_medium,
+            font_small=self.font_small,
+            font_micro=self.font_micro,
+            char_default=self.assets.get("char_default"),
+            app_version=self.app_version,
+        )
 
     def _get_game_icon_at(self, pos: Tuple[int, int]) -> Optional[int]:
         """게임 선택 화면에서 클릭/호버한 아이콘 인덱스를 반환한다(0..2)."""
@@ -1031,6 +1050,26 @@ class BuriBuriPartyApp:
 
         helper = self.font_micro.render("마우스로 선택하거나 방향키로 이동 후, Enter로 시작", True, INACTIVE_TEXT)
         self.screen.blit(helper, helper.get_rect(center=(SCREEN_WIDTH // 2, 112)))
+
+        # 랭킹 버튼 (오른쪽 상단)
+        ranking_btn_w, ranking_btn_h = 100, 44
+        ranking_btn_x = SCREEN_WIDTH - ranking_btn_w - 40
+        ranking_btn_y = 60
+        ranking_btn_rect = pygame.Rect(ranking_btn_x, ranking_btn_y, ranking_btn_w, ranking_btn_h)
+        self._ranking_button_rect = ranking_btn_rect
+
+        # 버튼 호버 체크
+        mouse_pos = pygame.mouse.get_pos()
+        is_hovered = ranking_btn_rect.collidepoint(mouse_pos)
+
+        # 버튼 배경
+        btn_color = (50, 50, 60) if is_hovered else (70, 70, 80)
+        pygame.draw.rect(self.screen, btn_color, ranking_btn_rect, border_radius=10)
+        pygame.draw.rect(self.screen, (30, 30, 30), ranking_btn_rect, width=2, border_radius=10)
+
+        # 버튼 텍스트
+        ranking_text = self.font_small.render("랭킹", True, (255, 255, 255))
+        self.screen.blit(ranking_text, ranking_text.get_rect(center=ranking_btn_rect.center))
 
         # 디폴트 캐릭터(장식용)
         char = self.assets.get("char_default")
